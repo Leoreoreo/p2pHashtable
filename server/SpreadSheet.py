@@ -136,35 +136,3 @@ class SpreadSheet:
             "message": "Cell not found"
         }
 
-    def size(self):
-        # check if empty
-        if not self.data:
-            return {
-                "status": "failure", 
-                "message": "SpreadSheet empty"
-            }
-        # return size
-        return {
-            "status": "success", 
-            "max_row": max([int(key.split()[0]) for key in self.data]),
-            "max_col": max([int(key.split()[1]) for key in self.data]) 
-        }
-
-    def query(self, row, col, width, height):
-        # check input
-        try:
-            row, col, width, height = int(row), int(col), int(width), int(height)
-        except:
-            return {"status": "failure", "message": "Invalid row/column/width/height value"}
-        if not self._are_positive_int([row, col, width, height]):
-            return {"status": "failure", "message": "Invalid row/column/width/height value"} 
-        # query
-        res = {}
-        for r in range(row, row + height):
-            for c in range(col, col + width):
-                if f'{r} {c}' in self.data:
-                    res[f'{r} {c}'] = self.data[f'{r} {c}']
-        return {
-            "status": "success", 
-            "data": res
-        }

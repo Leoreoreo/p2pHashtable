@@ -15,7 +15,7 @@ def register_name_server(port, project_name):
     while True:
         message = {
             "type": "spreadsheet",
-            "owner": "###", # Owner ID
+            "owner": "lli27", # Owner ID
             "port": port,
             "project": project_name,
             "width": 120,
@@ -64,7 +64,7 @@ class SpreadSheetServer:
         for i in range(32):
             finger_id = (self.node_id + 2**i) % 2**32
             if self.node_id < finger_id <= joining_node_id:
-                self.finger_tﬁable[i] = joining_node_id
+                self.finger_table[i] = joining_node_id
 
     def handle_request(self, request):
         try:
@@ -85,12 +85,8 @@ class SpreadSheetServer:
                 return self.spreadsheet.lookup(row, col)
             elif method == "remove":
                 return self.spreadsheet.remove(row, col)
-            elif method == "size":
-                return self.spreadsheet.size()
-            elif method == "query":
-                return self.spreadsheet.query(row, col, request["width"], request["height"])
             else:
-                return {"status": "error", "message": "Invalid method. (insert/lookup/remove/size/query)"}
+                return {"status": "error", "message": "Invalid method. (insert/lookup/remove)"}
         except:
             return {"status": "error", "message": "Invalid request; method required"}
 
