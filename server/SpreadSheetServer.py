@@ -8,7 +8,7 @@ import threading
 import os
 from SpreadSheet import SpreadSheet
 import select
-from hashlib import sha256
+import requests
 
 def register_name_server(port, project_name):
     name_server_address = ("catalog.cse.nd.edu", 9097)
@@ -27,37 +27,68 @@ def register_name_server(port, project_name):
         # register once a minute
         time.sleep(60)
 
+class Node:
+    def __init__(self, host, port, node_id):
+        self.host = host
+        self.port = int(port)
+        self.node_id = int(node_id)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.connect((self.host, self.port))
+
+
 class SpreadSheetServer:
-    def __init__(self, project_name):
+    def __init__(self, project_name, node_id):
         self.spreadsheet = SpreadSheet()
-        self.node_id = int(sha256(project_name.encode()).hexdigest(), 16) % 2**32  # Generate node ID
-        self.successor = None  # Node ID of the successor
-        self.predecessor = None  # Node ID of the predecessor
-        self.finger_table = {}  # Finger table for routing
-        self.project_name = project_name
-        self._initialize_chord()
+        self.node_id = node_id
+        self.host = None
+        self.port = None
+        self.successor = None       
+        self.predecessor = None     
+        self.finger_table = {}      # Finger table for routing
+        self.project_name = f'{project_name}_{node_id}'
+        self._join()
+
+    def _join(self):
+        """ New node tries to join existing chord system """
+        try:
+            response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
+            services = response.json()
+            service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]], key=lambda x: x.get("lastheardfrom"))
+            self.host = service.get("name")
+            self.port = service.get("port")
+            print(f'contacting to: {self.host, self.port} for join request')
+            join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            join_socket.connect((self.host, self.port))
+            response_data = self.send_request(join_socket, {"method": "join"})
+            join_socket.close()
+            self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])
+            print(f'sucessor connected: {self.successor.host, self.successor.port, self.successor.node_id}')
+        except Exception as e:
+            print(e)
+            print('first server, initialize chord')
+            self._initialize_chord()
 
     def _initialize_chord(self):
         """ Initialize Chord-specific parameters, setting successor and populating the finger table. """
         self.successor = self.node_id  # Initially, set successor to itself
-        self._populate_finger_table()
+        # self._populate_finger_table()
 
-    def _populate_finger_table(self):
-        """ Populate the finger table based on Chord's finger table logic. """
-        for i in range(32):  # Assuming a 32-bit hash space
-            finger_id = (self.node_id + 2**i) % 2**32
-            self.finger_table[i] = self.find_successor(finger_id)
+    # def _populate_finger_table(self):
+    #     """ Populate the finger table based on Chord's finger table logic. """
+    #     for i in range(32):  # Assuming a 32-bit hash space
+    #         finger_id = (self.node_id + 2**i) % 2**32
+    #         self.finger_table[i] = self.find_successor(finger_id)
 
-    def find_successor(self, key):
-        """ Find the successor node responsible for a given key. """
-        if self.node_id < key <= self.successor:
-            return self.successor
-        # Traverse finger table in reverse to find the closest preceding node
-        for i in reversed(range(32)):
-            finger_id = self.finger_table[i]
-            if self.node_id < finger_id < key:
-                return finger_id
-        return self.successor
+    # def find_successor(self, key):
+    #     """ Find the successor node responsible for a given key. """
+    #     if self.node_id < key <= self.successor:
+    #         return self.successor
+    #     # Traverse finger table in reverse to find the closest preceding node
+    #     for i in reversed(range(32)):
+    #         finger_id = self.finger_table[i]
+    #         if self.node_id < finger_id < key:
+    #             return finger_id
+    #     return self.successor
 
     def update_finger_table(self, joining_node_id):
         """ Update the finger table entries when a new node joins. """
@@ -66,17 +97,34 @@ class SpreadSheetServer:
             if self.node_id < finger_id <= joining_node_id:
                 self.finger_table[i] = joining_node_id
 
+    def send_request(self, socket, request):
+        try:
+            print(f'sending request: {request}')
+            request_data = f'{json.dumps(request)}\n'.encode('utf-8')
+            socket.sendall(request_data)
+            socket.settimeout(5)             # wait at most 5 sec
+
+            response_data = b''
+            while not response_data.endswith(b'\n'):
+                more = socket.recv(1)
+                if not more:
+                    raise EOFError("Socket connection broken")
+                response_data += more
+            return json.loads(response_data.decode('utf-8').strip())
+        except Exception as e:
+            print(f"Request: {request}\n Error: {e}\n")
+
     def handle_request(self, request):
         try:
             method = request.get("method")
             row, col = request.get("row"), request.get("column")
-            key = int(sha256(f"{row},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
+            # key = int(sha256(f"{row},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
 
-            if self.find_successor(key) != self.node_id:
-                # Route request to the responsible node (using an RPC call)
-                successor = self.find_successor(key)
-                self.forward_request_to_successor(successor, request)
-                return {"status": "forwarded", "node": successor}
+            # if self.find_successor(key) != self.node_id:
+            #     # Route request to the responsible node (using an RPC call)
+            #     successor = self.find_successor(key)
+            #     self.forward_request_to_successor(successor, request)
+            #     return {"status": "forwarded", "node": successor}
 
             # If the node is responsible, handle the request
             if method == "insert":
@@ -85,40 +133,44 @@ class SpreadSheetServer:
                 return self.spreadsheet.lookup(row, col)
             elif method == "remove":
                 return self.spreadsheet.remove(row, col)
+            elif method == "join":
+                # TODO: route, return port + host of successor
+                return {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
             else:
                 return {"status": "error", "message": "Invalid method. (insert/lookup/remove)"}
         except:
             return {"status": "error", "message": "Invalid request; method required"}
 
-    def join(self, existing_node_id):
-        """ Join an existing Chord ring. """
-        if existing_node_id != self.node_id:
-            self.successor = self.find_successor(existing_node_id)
-            self.update_finger_table(existing_node_id)
+    # def join(self, existing_node_id):
+    #     """ Join an existing Chord ring. """
+    #     if existing_node_id != self.node_id:
+    #         self.successor = self.find_successor(existing_node_id)
+    #         self.update_finger_table(existing_node_id)
 
-    def leave(self):
-        """ Leave the Chord ring, transferring data and updating neighbors. """
-        if self.successor:
-            # Transfer all data to the successor before leaving
-            self.transfer_data_to_successor(self.successor)
-            # Notify successor and predecessor of departure
+    # def leave(self):
+    #     """ Leave the Chord ring, transferring data and updating neighbors. """
+    #     if self.successor:
+    #         # Transfer all data to the successor before leaving
+    #         self.transfer_data_to_successor(self.successor)
+    #         # Notify successor and predecessor of departure
 
-    def transfer_data_to_successor(self, successor_id):
-        """ Transfer responsibility of keys to the successor. """
-        transferred_data = {key: value for key, value in self.spreadsheet.data.items() if key <= successor_id}
-        # Logic to transfer data to the successor (e.g., send via network)
+    # def transfer_data_to_successor(self, successor_id):
+    #     """ Transfer responsibility of keys to the successor. """
+    #     transferred_data = {key: value for key, value in self.spreadsheet.data.items() if key <= successor_id}
+    #     # Logic to transfer data to the successor (e.g., send via network)
 
-def start_server(project_name):
-    server = SpreadSheetServer(project_name)
+def start_server(project_name, node_id):
+    server = SpreadSheetServer(project_name, node_id)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as master_socket:
         master_socket.bind(('', 0))
         master_socket.listen(5)
-        port = master_socket.getsockname()[1]
-        print(f"Listening on port {port}")
+        server.host = socket.getfqdn()
+        server.port = master_socket.getsockname()[1]
+        print(f"Listening on port {server.port}")
 
         # Background thread to register with the name server
-        threading.Thread(target=register_name_server, args=(port, project_name), daemon=True).start()
+        threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
 
         client_sockets = {}
         while True:
@@ -157,7 +209,7 @@ def start_server(project_name):
                         print(f"Received malformed JSON from {client_sockets[sock]}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 SpreadSheetServer.py <project_name>")
+    if len(sys.argv) < 3:
+        print("Usage: python3 SpreadSheetServer.py <project_name> <node_id>")
         sys.exit(1)
-    start_server(sys.argv[1])
+    start_server(sys.argv[1], sys.argv[2])
