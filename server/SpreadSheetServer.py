@@ -28,20 +28,24 @@ def register_name_server(port, project_name):
         time.sleep(60)
 
 class Node:
-    def __init__(self, host, port, node_id):
+    def __init__(self, host, port, node_id, sock=None):
         self.host = host
         self.port = int(port)
         self.node_id = int(node_id)
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((self.host, self.port))
+        if sock: 
+            self.socket = sock
+        else:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((self.host, self.port))
 
 
 class SpreadSheetServer:
-    def __init__(self, project_name, node_id):
+    def __init__(self, project_name, node_id, host, port):
         self.spreadsheet = SpreadSheet()
+        self.client_sockets = {}
         self.node_id = node_id
-        self.host = None
-        self.port = None
+        self.host = host
+        self.port = port
         self.successor = None       
         self.predecessor = None     
         self.finger_table = {}      # Finger table for routing
@@ -51,18 +55,23 @@ class SpreadSheetServer:
     def _join(self):
         """ New node tries to join existing chord system """
         try:
+            # connect to a random server, and send join request
             response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
             services = response.json()
+            # TODO: retry connecting to service (loop through all possible names)
             service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]], key=lambda x: x.get("lastheardfrom"))
-            self.host = service.get("name")
-            self.port = service.get("port")
-            print(f'contacting to: {self.host, self.port} for join request')
+            random_host = service.get("name")
+            random_port = service.get("port")
             join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            join_socket.connect((self.host, self.port))
-            response_data = self.send_request(join_socket, {"method": "join"})
+            join_socket.connect((random_host, random_port))
+            response_data = self.send_request(join_socket, {"method": "join"})  # get successor addr from response
             join_socket.close()
-            self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])
+
+            self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])   # set successor and connect
             print(f'sucessor connected: {self.successor.host, self.successor.port, self.successor.node_id}')
+            
+            self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id}) # inform successor of its pred
+
         except Exception as e:
             print(e)
             print('first server, initialize chord')
@@ -70,9 +79,7 @@ class SpreadSheetServer:
 
     def _initialize_chord(self):
         """ Initialize Chord-specific parameters, setting successor and populating the finger table. """
-        self.successor = self.node_id  # Initially, set successor to itself
-        # self._populate_finger_table()
-
+        pass
     # def _populate_finger_table(self):
     #     """ Populate the finger table based on Chord's finger table logic. """
     #     for i in range(32):  # Assuming a 32-bit hash space
@@ -90,17 +97,18 @@ class SpreadSheetServer:
     #             return finger_id
     #     return self.successor
 
-    def update_finger_table(self, joining_node_id):
-        """ Update the finger table entries when a new node joins. """
-        for i in range(32):
-            finger_id = (self.node_id + 2**i) % 2**32
-            if self.node_id < finger_id <= joining_node_id:
-                self.finger_table[i] = joining_node_id
+    # def update_finger_table(self, joining_node_id):
+    #     """ Update the finger table entries when a new node joins. """
+    #     for i in range(32):
+    #         finger_id = (self.node_id + 2**i) % 2**32
+    #         if self.node_id < finger_id <= joining_node_id:
+    #             self.finger_table[i] = joining_node_id
 
     def send_request(self, socket, request):
         try:
             print(f'sending request: {request}')
             request_data = f'{json.dumps(request)}\n'.encode('utf-8')
+        
             socket.sendall(request_data)
             socket.settimeout(5)             # wait at most 5 sec
 
@@ -110,14 +118,23 @@ class SpreadSheetServer:
                 if not more:
                     raise EOFError("Socket connection broken")
                 response_data += more
+            print(f'received response: {response_data}')
             return json.loads(response_data.decode('utf-8').strip())
         except Exception as e:
             print(f"Request: {request}\n Error: {e}\n")
+    
+    def send_message(self, socket, message):
+        try:
+            print(f'sending message: {message}')
+            message_data = f'{json.dumps(message)}\n'.encode('utf-8')
+            socket.sendall(message_data)
+            
+        except Exception as e:
+            print(f"message: {message}\n Error: {e}\n")
 
-    def handle_request(self, request):
+    def handle_request(self, request, socket):
         try:
             method = request.get("method")
-            row, col = request.get("row"), request.get("column")
             # key = int(sha256(f"{row},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
 
             # if self.find_successor(key) != self.node_id:
@@ -128,18 +145,47 @@ class SpreadSheetServer:
 
             # If the node is responsible, handle the request
             if method == "insert":
+                row, col = request.get("row"), request.get("column")
                 return self.spreadsheet.insert(row, col, request["value"])
             elif method == "lookup":
+                row, col = request.get("row"), request.get("column")
                 return self.spreadsheet.lookup(row, col)
             elif method == "remove":
+                row, col = request.get("row"), request.get("column")
                 return self.spreadsheet.remove(row, col)
             elif method == "join":
                 # TODO: route, return port + host of successor
                 return {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
+            elif method == "imYourPred":
+                pred_host, pred_port = request.get("host"), request.get("port")
+
+                if not self.predecessor:    # new node or node1 receiving
+                    if not self.successor:  # node1 receiving
+                        self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                        self.successor = self.predecessor
+                        self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
+                    else:   # new node receives
+                        self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                else:   # ring member receives
+                    # inform predecessor
+                    self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
+                    self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
+                print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
+
+            elif method == "yourNewSucc":
+                succ_host, succ_port = request.get("host"), request.get("port")
+                self.successor = Node(succ_host, succ_port, request.get("node_id"))
+                self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
+                if self.successor: print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
+                if self.predecessor: print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
             else:
-                return {"status": "error", "message": "Invalid method. (insert/lookup/remove)"}
-        except:
-            return {"status": "error", "message": "Invalid request; method required"}
+                # return {"status": "error", "message": f"Invalid method: {method}. (insert/lookup/remove)"}
+                pass
+        except Exception as e:
+            print("error in handling request")
+            print(e)
+            # return {"status": "error", "message": f"Invalid request {request}; method required"}
 
     # def join(self, existing_node_id):
     #     """ Join an existing Chord ring. """
@@ -160,28 +206,33 @@ class SpreadSheetServer:
     #     # Logic to transfer data to the successor (e.g., send via network)
 
 def start_server(project_name, node_id):
-    server = SpreadSheetServer(project_name, node_id)
-
+    
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as master_socket:
         master_socket.bind(('', 0))
         master_socket.listen(5)
-        server.host = socket.getfqdn()
-        server.port = master_socket.getsockname()[1]
+        server = SpreadSheetServer(project_name, node_id, socket.getfqdn(), master_socket.getsockname()[1])
         print(f"Listening on port {server.port}")
-
+        if server.successor:
+            print(server.successor.node_id)
         # Background thread to register with the name server
         threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
 
-        client_sockets = {}
+        server.client_sockets = {}
         while True:
-            sockets_to_read = [master_socket] + list(client_sockets.keys())
+            if server.successor and server.successor.socket not in server.client_sockets:
+                server.client_sockets[server.successor.socket] = (server.successor.host, server.successor.port)
+            if server.predecessor and server.predecessor.socket not in server.client_sockets:
+                server.client_sockets[server.predecessor.socket] = (server.predecessor.host, server.predecessor.port)
+
+            sockets_to_read = [master_socket] + list(server.client_sockets.keys())
+
             readable_sockets, _, _ = select.select(sockets_to_read, [], [])
 
             for sock in readable_sockets:
                 if sock is master_socket:  # new connection
                     client_socket, addr = master_socket.accept()
                     print(f"New connection from {addr}")
-                    client_sockets[client_socket] = addr
+                    server.client_sockets[client_socket] = addr
                 else:
                     try:
                         data = b''
@@ -192,21 +243,22 @@ def start_server(project_name, node_id):
                             data += more
                         data = data.decode('utf-8').strip()
 
-                        print(client_sockets[sock], data)
+                        print(server.client_sockets[sock], data)
 
                         request = json.loads(data)
-                        response = server.handle_request(request)
-                        response_data = f'{json.dumps(response)}\n'.encode('utf-8')
-                        sock.sendall(response_data)  # send response
+                        response = server.handle_request(request, sock)
+                        if response:
+                            response_data = f'{json.dumps(response)}\n'.encode('utf-8')
+                            sock.sendall(response_data)  # send response
 
                     except EOFError:
                         print(f"Client {sock.getpeername()} disconnected")
                         sock.close()
-                        del client_sockets[sock]
+                        del server.client_sockets[sock]
                     except (ConnectionResetError, BrokenPipeError) as e:
-                        print(f"Client {client_sockets[sock]} disconnected unexpectedly: {e}")
+                        print(f"Client {server.client_sockets[sock]} disconnected unexpectedly: {e}")
                     except json.JSONDecodeError:
-                        print(f"Received malformed JSON from {client_sockets[sock]}")
+                        print(f"Received malformed JSON from {server.client_sockets[sock]}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
