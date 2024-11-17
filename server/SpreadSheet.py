@@ -3,15 +3,16 @@
 import os, json
 
 class SpreadSheet:
-    def __init__(self, node_id, ckpt_path="_sheet.ckpt", log_path="_sheet.log", log_max_size=100):
+    def __init__(self, node_id, log_max_size=100):
         self.data = {}
         self.node_id = node_id
-        self.ckpt_path = str(node_id) + ckpt_path
-        self.log_path = str(node_id) + log_path
+        self.ckpt_path = f"ckpt/{str(node_id)}/sheet.ckpt"
+        self.log_path = f"log/{str(node_id)}/sheet.log"
         self.log_max_size = log_max_size
         self.log_size = 0
         self._recover()
-        self.log = open(log_path, "a")
+        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+        self.log = open(self.log_path, "a")
         
 
     # recover from crash: load checkpoint and then replay log
