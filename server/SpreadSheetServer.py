@@ -41,7 +41,7 @@ class Node:
 
 class SpreadSheetServer:
     def __init__(self, project_name, node_id, host, port):
-        self.spreadsheet = SpreadSheet()
+        self.spreadsheet = SpreadSheet(node_id=node_id)
         self.client_sockets = {}
         self.node_id = node_id
         self.host = host

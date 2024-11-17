@@ -3,10 +3,11 @@
 import os, json
 
 class SpreadSheet:
-    def __init__(self, ckpt_path="sheet.ckpt", log_path="sheet.log", log_max_size=100):
+    def __init__(self, node_id, ckpt_path="_sheet.ckpt", log_path="_sheet.log", log_max_size=100):
         self.data = {}
-        self.ckpt_path = ckpt_path
-        self.log_path = log_path
+        self.node_id = node_id
+        self.ckpt_path = str(node_id) + ckpt_path
+        self.log_path = str(node_id) + log_path
         self.log_max_size = log_max_size
         self.log_size = 0
         self._recover()
