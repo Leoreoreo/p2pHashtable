@@ -10,6 +10,9 @@ from SpreadSheet import SpreadSheet
 import select
 import requests
 
+FINGER_NUM  = 8
+MAX_KEY     = 2 ** FINGER_NUM
+
 def register_name_server(port, project_name):
     name_server_address = ("catalog.cse.nd.edu", 9097)
     while True:
@@ -41,16 +44,17 @@ class Node:
 
 class SpreadSheetServer:
     def __init__(self, project_name, node_id, host, port):
-        self.spreadsheet = SpreadSheet(node_id=node_id)
-        self.client_sockets = {}
-        self.node_id = node_id
-        self.host = host
+        self.node_id = int(node_id) % MAX_KEY
+        self.host = host    # master host and port
         self.port = port
+        self.client_sockets = {}
+        self.spreadsheet = SpreadSheet(node_id=self.node_id)
+        self.project_name = f'{project_name}_{node_id}' 
         self.successor = None       
         self.predecessor = None     
-        self.finger_table = {}      # Finger table for routing
-        self.project_name = f'{project_name}_{node_id}'
+        self.finger_table = {(self.node_id + 2**i) % MAX_KEY : None for i in range(FINGER_NUM)}      # {target_id, (target_host, target_port, socket)}
         self._join()
+        
 
     def _join(self):
         """ New node tries to join existing chord system """
@@ -74,11 +78,10 @@ class SpreadSheetServer:
 
         except Exception as e:
             print(e)
-            print('first server, initialize chord')
-            self._initialize_chord()
+            print('first server')
 
-    def _initialize_chord(self):
-        """ Initialize Chord-specific parameters, setting successor and populating the finger table. """
+    def _establish_chord(self):
+
         pass
     # def _populate_finger_table(self):
     #     """ Populate the finger table based on Chord's finger table logic. """
