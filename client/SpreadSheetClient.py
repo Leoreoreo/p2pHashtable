@@ -19,7 +19,8 @@ class SpreadSheetClient:
         try:
             response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
             services = response.json()
-            service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project") == self.project_name], key=lambda x: x.get("lastheardfrom"))
+            # TODO: retry connecting to service (loop through all possible names)
+            service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name], key=lambda x: x.get("lastheardfrom"))
             self.host = service.get("name")
             self.port = service.get("port")
             print(f'connecting to: {self.host, self.port}')
@@ -45,22 +46,15 @@ class SpreadSheetClient:
         except Exception as e:
             print(f"Request: {request}\n Error: {e}\n")
 
-    def insert(self, row, col, value):
-        request = {"method": "insert", "row": row, "column": col, "value": value}
+    def insert(self, key, value):
+        request = {"method": "insert", "key": key, "value": value}
         return self.send_request(request)
 
-    def lookup(self, row, col):
-        request = {"method": "lookup", "row": row, "column": col}
+    def lookup(self, key):
+        request = {"method": "lookup", "key": key}
         return self.send_request(request)
 
-    def remove(self, row, col):
-        request = {"method": "remove", "row": row, "column": col}
+    def remove(self, key):
+        request = {"method": "remove", "key": key}
         return self.send_request(request)
 
-    def size(self):
-        request = {"method": "size"}
-        return self.send_request(request)
-
-    def query(self, row, col, width, height):
-        request = {"method": "query", "row": row, "column": col, "width": width, "height": height}
-        return self.send_request(request)

@@ -10,7 +10,7 @@ from SpreadSheet import SpreadSheet
 import select
 import requests
 
-FINGER_NUM  = 8
+FINGER_NUM  = 20
 MAX_KEY     = 2 ** FINGER_NUM
 
 def register_name_server(port, project_name):
@@ -138,7 +138,7 @@ class SpreadSheetServer:
     def handle_request(self, request, socket):
         try:
             method = request.get("method")
-            # key = int(sha256(f"{row},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
+            # key = int(sha256(f"{key},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
 
             # if self.find_successor(key) != self.node_id:
             #     # Route request to the responsible node (using an RPC call)
@@ -148,14 +148,14 @@ class SpreadSheetServer:
 
             # If the node is responsible, handle the request
             if method == "insert":
-                row, col = request.get("row"), request.get("column")
-                return self.spreadsheet.insert(row, col, request["value"])
+                key = request.get("key")
+                return self.spreadsheet.insert(key, request["value"])
             elif method == "lookup":
-                row, col = request.get("row"), request.get("column")
-                return self.spreadsheet.lookup(row, col)
+                key = request.get("key")
+                return self.spreadsheet.lookup(key)
             elif method == "remove":
-                row, col = request.get("row"), request.get("column")
-                return self.spreadsheet.remove(row, col)
+                key = request.get("key")
+                return self.spreadsheet.remove(key)
             elif method == "join":
                 # TODO: route, return port + host of successor
                 return {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
