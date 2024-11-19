@@ -35,8 +35,8 @@ def print_info(server): # print connection infos every 5 sec
         if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
         if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
         print("\tfinger_table: ")
-        for node_id, node in server.finger_table.items():
-            print(f'{node_id}\t: {node}')
+        for node_id, host, port, socket in server.finger_table:
+            print(f'{node_id}\t: {host}:{port}')
         time.sleep(5)
 
 class Node:
@@ -59,9 +59,9 @@ class SpreadSheetServer:
         self.client_sockets = {}
         self.spreadsheet = SpreadSheet(node_id=self.node_id)
         self.project_name = f'{project_name}_{node_id}' 
-        self.successor = None       
+        self.successor = None
         self.predecessor = None     
-        self.finger_table = {(self.node_id + 2**i) % MAX_KEY : None for i in range(FINGER_NUM)}      # {target_id, (target_host, target_port, socket)}
+        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, None, None, None] for i in range(FINGER_NUM)]      # [[target_id, target_host, target_port, socket]]
         self._join()
         
 
@@ -88,6 +88,8 @@ class SpreadSheetServer:
         except Exception as e:
             print(e)
             print('first server')
+            for i in range(FINGER_NUM):
+                self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3] = self.host, self.port, None
 
     def _establish_chord(self):
 
@@ -182,7 +184,12 @@ class SpreadSheetServer:
                     # inform predecessor
                     self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
                     self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
-
+                    # TODO: help predecessor to establish finger table
+                    for i in range(FINGER_NUM):
+                        target_id = (self.predecessor.node_id + 2**i) % MAX_KEY
+                        route_target = self._route(target_id)
+                        print(f'{target_id} routes to {route_target}')
+                        
             elif method == "yourNewSucc":
                 succ_host, succ_port = request.get("host"), request.get("port")
                 self.successor = Node(succ_host, succ_port, request.get("node_id"))
@@ -194,6 +201,17 @@ class SpreadSheetServer:
             print("error in handling request")
             print(e)
             # return {"status": "error", "message": f"Invalid request {request}; method required"}
+    
+    def _route(self, target_id):
+        """ route target_id based on finger table """
+        candidates = [row[0] for row in self.finger_table if row[0] <= target_id]
+        if len(candidates) > 0: 
+            finger_id = max(candidates)
+        else:
+            finger_id = max(row[0] for row in self.finger_table)
+        for row in self.finger_table:
+            if row[0] == finger_id:
+                return row
 
     # def join(self, existing_node_id):
     #     """ Join an existing Chord ring. """
