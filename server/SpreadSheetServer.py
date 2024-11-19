@@ -30,6 +30,15 @@ def register_name_server(port, project_name):
         # register once a minute
         time.sleep(60)
 
+def print_info(server): # print connection infos every 5 sec
+    while True:
+        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
+        if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
+        print("\tfinger_table: ")
+        for node_id, node in server.finger_table.items():
+            print(f'{node_id}\t: {node}')
+        time.sleep(5)
+
 class Node:
     def __init__(self, host, port, node_id, sock=None):
         self.host = host
@@ -173,15 +182,11 @@ class SpreadSheetServer:
                     # inform predecessor
                     self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
                     self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
-                print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
-                print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
 
             elif method == "yourNewSucc":
                 succ_host, succ_port = request.get("host"), request.get("port")
                 self.successor = Node(succ_host, succ_port, request.get("node_id"))
                 self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
-                if self.successor: print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
-                if self.predecessor: print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
             else:
                 # return {"status": "error", "message": f"Invalid method: {method}. (insert/lookup/remove)"}
                 pass
@@ -219,6 +224,7 @@ def start_server(project_name, node_id):
             print(server.successor.node_id)
         # Background thread to register with the name server
         threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
+        threading.Thread(target=print_info, args=(server,), daemon=True).start()
 
         server.client_sockets = {}
         while True:
@@ -255,11 +261,11 @@ def start_server(project_name, node_id):
                             sock.sendall(response_data)  # send response
 
                     except EOFError:
-                        print(f"Client {sock.getpeername()} disconnected")
+                        print(f"{sock.getpeername()} disconnected")
                         sock.close()
                         del server.client_sockets[sock]
                     except (ConnectionResetError, BrokenPipeError) as e:
-                        print(f"Client {server.client_sockets[sock]} disconnected unexpectedly: {e}")
+                        print(f"{server.client_sockets[sock]} disconnected unexpectedly: {e}")
                     except json.JSONDecodeError:
                         print(f"Received malformed JSON from {server.client_sockets[sock]}")
 
