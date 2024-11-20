@@ -30,6 +30,15 @@ def register_name_server(port, project_name):
         # register once a minute
         time.sleep(60)
 
+def print_info(server): # print connection infos every 5 sec
+    while True:
+        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
+        if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
+        print("\tfinger_table: ")
+        for node_id, host, port, socket in server.finger_table:
+            print(f'{node_id}\t: {host}:{port}')
+        time.sleep(5)
+
 class Node:
     def __init__(self, host, port, node_id, sock=None):
         self.host = host
@@ -50,9 +59,9 @@ class SpreadSheetServer:
         self.client_sockets = {}
         self.spreadsheet = SpreadSheet(node_id=self.node_id)
         self.project_name = f'{project_name}_{node_id}' 
-        self.successor = None       
+        self.successor = None
         self.predecessor = None     
-        self.finger_table = {(self.node_id + 2**i) % MAX_KEY : None for i in range(FINGER_NUM)}      # {target_id, (target_host, target_port, socket)}
+        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, None, None, None] for i in range(FINGER_NUM)]      # [[target_id, target_host, target_port, socket]]
         self._join()
         
 
@@ -79,6 +88,8 @@ class SpreadSheetServer:
         except Exception as e:
             print(e)
             print('first server')
+            for i in range(FINGER_NUM):
+                self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3] = self.host, self.port, None
 
     def _establish_chord(self):
 
@@ -173,15 +184,16 @@ class SpreadSheetServer:
                     # inform predecessor
                     self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
                     self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
-                print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
-                print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
-
+                    # TODO: help predecessor to establish finger table
+                    for i in range(FINGER_NUM):
+                        target_id = (self.predecessor.node_id + 2**i) % MAX_KEY
+                        route_target = self._route(target_id)
+                        print(f'{target_id} routes to {route_target}')
+                        
             elif method == "yourNewSucc":
                 succ_host, succ_port = request.get("host"), request.get("port")
                 self.successor = Node(succ_host, succ_port, request.get("node_id"))
                 self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
-                if self.successor: print("successor: ", self.successor.host, self.successor.port, self.successor.node_id)
-                if self.predecessor: print("predecessor: ", self.predecessor.host, self.predecessor.port, self.predecessor.node_id)
             else:
                 # return {"status": "error", "message": f"Invalid method: {method}. (insert/lookup/remove)"}
                 pass
@@ -189,6 +201,17 @@ class SpreadSheetServer:
             print("error in handling request")
             print(e)
             # return {"status": "error", "message": f"Invalid request {request}; method required"}
+    
+    def _route(self, target_id):
+        """ route target_id based on finger table """
+        candidates = [row[0] for row in self.finger_table if row[0] <= target_id]
+        if len(candidates) > 0: 
+            finger_id = max(candidates)
+        else:
+            finger_id = max(row[0] for row in self.finger_table)
+        for row in self.finger_table:
+            if row[0] == finger_id:
+                return row
 
     # def join(self, existing_node_id):
     #     """ Join an existing Chord ring. """
@@ -219,6 +242,7 @@ def start_server(project_name, node_id):
             print(server.successor.node_id)
         # Background thread to register with the name server
         threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
+        threading.Thread(target=print_info, args=(server,), daemon=True).start()
 
         server.client_sockets = {}
         while True:
@@ -255,11 +279,11 @@ def start_server(project_name, node_id):
                             sock.sendall(response_data)  # send response
 
                     except EOFError:
-                        print(f"Client {sock.getpeername()} disconnected")
+                        print(f"{sock.getpeername()} disconnected")
                         sock.close()
                         del server.client_sockets[sock]
                     except (ConnectionResetError, BrokenPipeError) as e:
-                        print(f"Client {server.client_sockets[sock]} disconnected unexpectedly: {e}")
+                        print(f"{server.client_sockets[sock]} disconnected unexpectedly: {e}")
                     except json.JSONDecodeError:
                         print(f"Received malformed JSON from {server.client_sockets[sock]}")
 
