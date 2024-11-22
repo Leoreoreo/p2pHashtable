@@ -37,7 +37,7 @@ def print_info(server): # print connection infos every 5 sec
         if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
         print("\n\tfinger_table: ")
         for target_id, node_id, host, port, socket in server.finger_table:
-            print(f'{target_id}\t{node_id}\t: {host}:{port}')
+            print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
         print("\n\n")
         time.sleep(5)
 
@@ -63,11 +63,9 @@ class SpreadSheetServer:
         self.project_name = f'{project_name}_{node_id}' 
         self.successor = None
         self.predecessor = None     
-        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, None, None, None, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
-        for i in range(FINGER_NUM):
-            self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3], self.finger_table[i][4] = self.node_id, self.host, self.port, None
+        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
         self._join()
-        
+    
 
     def _join(self):
         """ New node tries to join existing chord system """
@@ -94,8 +92,6 @@ class SpreadSheetServer:
         except Exception as e:
             print(e)
             print('first server')
-            # for i in range(FINGER_NUM):
-            #     self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3], self.finger_table[i][4] = self.node_id, self.host, self.port, None
 
     def _establish_chord(self):
 
@@ -217,6 +213,10 @@ class SpreadSheetServer:
             return start < val <= end
         return not (end < val <= start)
 
+    def _isResponsible(self, key):
+        """ test if is responsible for this key (lookup) """
+        return self._inInterval(self.predecessor.node_id, self.node_id, key)
+
     def _route(self, target_id):
         """ route target_id based on finger table """
         for i in range(FINGER_NUM):
@@ -230,6 +230,10 @@ class SpreadSheetServer:
         for i in range(FINGER_NUM):
             if self._inInterval(self.finger_table[i][0], self.finger_table[i][1], joining_node_id):
                 self.finger_table[i][1:] = joining_node_id, joining_host, joining_port, None
+                if self.predecessor and joining_node_id == self.predecessor.node_id:
+                    self.finger_table[i][-1] = self.predecessor.socket
+                if self.successor and joining_node_id == self.successor.node_id:
+                    self.finger_table[i][-1] = self.successor.socket
                 
 
                 
