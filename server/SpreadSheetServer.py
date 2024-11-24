@@ -67,6 +67,7 @@ class SpreadSheetServer:
         self.predecessor = None 
 
         self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
+        self.pred_finger_table = []     # [[target_id, node_id, node_host, node_port]]
 
         self.message_dic = {}       # incoming messages: {msg_id: (source_sock, target_sock)}
         self.msg_counter = 0    # self unique msg_id
@@ -96,29 +97,30 @@ class SpreadSheetServer:
             
             self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id}) # inform successor of its pred
 
+
         except Exception as e:
             print(e)
             print('first server')
 
     def _establish_chord(self):
-
-        pass
-    # def _populate_finger_table(self):
-    #     """ Populate the finger table based on Chord's finger table logic. """
-    #     for i in range(32):  # Assuming a 32-bit hash space
-    #         finger_id = (self.node_id + 2**i) % 2**32
-    #         self.finger_table[i] = self.find_successor(finger_id)
-
-    # def find_successor(self, key):
-    #     """ Find the successor node responsible for a given key. """
-    #     if self.node_id < key <= self.successor:
-    #         return self.successor
-    #     # Traverse finger table in reverse to find the closest preceding node
-    #     for i in reversed(range(32)):
-    #         finger_id = self.finger_table[i]
-    #         if self.node_id < finger_id < key:
-    #             return finger_id
-    #     return self.successor
+        # establish finger table
+        print("establishing finger table")
+        for i in range(FINGER_NUM):
+            response_data = self.send_request(self.successor.socket, {"method": "establishChord", "key": self.finger_table[i][0]})
+            if "node_id" not in response_data:  # route back to itself => it is responsible
+                continue
+            try:
+                node_id = int(response_data["node_id"])
+                host = response_data["host"]
+                port = int(response_data["port"])
+                if self.finger_table[i-1][1] == node_id:
+                    self.finger_table[i][1:] = self.finger_table[i-1][1:]
+                else:
+                    finger_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    finger_socket.connect((host, port))
+                    self.finger_table[i][1:] = node_id, host, port, finger_socket
+            except Exception as e:
+                print(f"Error establishing chord: {e}")
 
     def send_request(self, socket, request):
         try:
@@ -150,14 +152,14 @@ class SpreadSheetServer:
 
     def handle_request(self, request, socket):
         try:
-            if "status" in request: # response
+            if "status" in request:     # response
                 self.send_message(self.message_dic[request.get("msg_id")][0], request)
                 del self.message_dic[request.get("msg_id")]
 
-            else:   # request
+            else:                       # request
                 method = request.get("method")
 
-                # If the node is responsible, handle the request
+                # If the node is responsible, perform the request
                 if "key" not in request or self._isResponsible(request.get("key")):  # perform the request, return result
                     # spreadsheet operations
                     if method == "insert":
@@ -189,17 +191,13 @@ class SpreadSheetServer:
                                 self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
                                 # update finger table to include predecessor
                                 self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port)
+                                self._establish_chord()
                         else:   # ring member receives
                             # inform predecessor
                             self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
                             self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
                             # TODO: notify all its PT of new pred's existance
 
-                            # TODO: help predecessor to establish finger table
-                            # for i in range(FINGER_NUM):
-                            #     target_id = (self.predecessor.node_id + 2**i) % MAX_KEY
-                            #     route_target = self._route(target_id)
-                            #     print(f'{target_id} routes to {route_target}')
 
                         # update finger table to include predecessor
                         self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port)
@@ -210,14 +208,21 @@ class SpreadSheetServer:
                         # update finger table to include successor
                         self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port)
                         self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
+                    
+                    elif method == "establishChord":
+                        message = {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
+
                     else:
                         pass
-                else:   
+                else:   # not responsible, route to target "key"
                     if "msg_id" not in request: # client reach out to chord, add msg_id to the request
                         request["msg_id"] = f"{self.node_id}_{self.msg_counter}"
                         self.msg_counter += 1
-                    # route to key
-                    next_socket = self._route(request["key"], request)
+                    
+                    next_socket = self._route(request["key"], request)  # route to key
                     self.message_dic[request["msg_id"]] = (socket, next_socket)
 
         except Exception as e:
@@ -299,6 +304,9 @@ def start_server(project_name, node_id):
                 server.client_sockets[server.successor.socket] = (server.successor.host, server.successor.port)
             if server.predecessor and server.predecessor.socket not in server.client_sockets:
                 server.client_sockets[server.predecessor.socket] = (server.predecessor.host, server.predecessor.port)
+            for _, _, host, port, sock in server.finger_table:
+                if sock and sock not in server.client_sockets:
+                    server.client_sockets[sock] = (host, port)
 
             sockets_to_read = [master_socket] + list(server.client_sockets.keys())
 
