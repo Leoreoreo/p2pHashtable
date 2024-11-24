@@ -38,7 +38,11 @@ def print_info(server): # print connection infos every 5 sec
         print("\n\tfinger_table: ")
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
-        print("\n\n")
+        print("\n")
+        print("\n\tpred_finger_table: ")
+        for target_id, node_id, host, port in server.pred_finger_table:
+            print(f'{target_id}\t{node_id}\t: {host}:{port}')
+        print("\n")
         time.sleep(5)
 
 class Node:
@@ -93,7 +97,7 @@ class SpreadSheetServer:
             self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])   # set successor and connect
             # update finger table to include successor
             self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port)
-            print(f'sucessor connected: {self.successor.host, self.successor.port, self.successor.node_id}')
+            print(f'successor connected: {self.successor.host, self.successor.port, self.successor.node_id}')
             
             self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id}) # inform successor of its pred
 
@@ -128,6 +132,8 @@ class SpreadSheetServer:
                         self.finger_table[i][1:] = node_id, host, port, finger_socket
             except Exception as e:
                 print(f"Error establishing chord: {e}")
+        # inform successor to updatePFT
+        self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
 
     def send_request(self, socket, request):
         try:
@@ -222,6 +228,8 @@ class SpreadSheetServer:
                             message["msg_id"] = request.get("msg_id")
                         self.send_message(socket, message)
 
+                    elif method == "updatePFT":
+                        self.pred_finger_table = request.get("PFT")
                     else:
                         pass
                 else:   # not responsible, route to target "key"
@@ -271,6 +279,9 @@ class SpreadSheetServer:
                     self.finger_table[i][-1] = self.predecessor.socket
                 if self.successor and joining_node_id == self.successor.node_id:
                     self.finger_table[i][-1] = self.successor.socket
+        
+        # inform successor to updatePFT
+        self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
                 
 
 
