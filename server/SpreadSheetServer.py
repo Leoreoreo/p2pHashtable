@@ -113,12 +113,19 @@ class SpreadSheetServer:
                 node_id = int(response_data["node_id"])
                 host = response_data["host"]
                 port = int(response_data["port"])
-                if self.finger_table[i-1][1] == node_id:
+                if self.finger_table[i-1][1] == node_id:    # check if match the same node
                     self.finger_table[i][1:] = self.finger_table[i-1][1:]
                 else:
-                    finger_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    finger_socket.connect((host, port))
-                    self.finger_table[i][1:] = node_id, host, port, finger_socket
+                    exist = False
+                    for sock, addr in self.client_sockets.items():  # check if already in socket list
+                        if addr[0] == host and addr[1] == port:
+                            self.finger_table[i][1:] = node_id, host, port, sock
+                            exist = True
+                            break
+                    if not exist:
+                        finger_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        finger_socket.connect((host, port))
+                        self.finger_table[i][1:] = node_id, host, port, finger_socket
             except Exception as e:
                 print(f"Error establishing chord: {e}")
 
