@@ -1,0 +1,14 @@
+new server sends to a ring node:
+"method": "join", "key": self.node_id
+    if matches:
+    -> "status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"
+    else:
+    -> route({"method": "join", "key": node_id, "msg_id":...})
+"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id
+    -> None
+"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")
+    -> None
+
+ring node routes to next node:
+"msg_id": ..., "method": "join", "key": node_id, 
+

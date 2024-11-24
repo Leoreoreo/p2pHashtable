@@ -37,7 +37,7 @@ def print_info(server): # print connection infos every 5 sec
         if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
         print("\n\tfinger_table: ")
         for target_id, node_id, host, port, socket in server.finger_table:
-            print(f'{target_id}\t{node_id}\t: {host}:{port}')
+            print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
         print("\n\n")
         time.sleep(5)
 
@@ -52,22 +52,27 @@ class Node:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.host, self.port))
 
-
 class SpreadSheetServer:
     def __init__(self, project_name, node_id, host, port):
         self.node_id = int(node_id) % MAX_KEY
+        self.project_name = f'{project_name}_{node_id}' 
+
         self.host = host    # master host and port
         self.port = port
+        
         self.client_sockets = {}
         self.spreadsheet = SpreadSheet(node_id=self.node_id)
-        self.project_name = f'{project_name}_{node_id}' 
+
         self.successor = None
-        self.predecessor = None     
-        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, None, None, None, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
-        for i in range(FINGER_NUM):
-            self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3], self.finger_table[i][4] = self.node_id, self.host, self.port, None
+        self.predecessor = None 
+
+        self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
+
+        self.message_dic = {}       # incoming messages: {msg_id: (source_sock, target_sock)}
+        self.msg_counter = 0    # self unique msg_id
+
         self._join()
-        
+    
 
     def _join(self):
         """ New node tries to join existing chord system """
@@ -81,7 +86,7 @@ class SpreadSheetServer:
             random_port = service.get("port")
             join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             join_socket.connect((random_host, random_port))
-            response_data = self.send_request(join_socket, {"method": "join"})  # get successor addr from response
+            response_data = self.send_request(join_socket, {"method": "join", "key": self.node_id})  # get successor addr from response
             join_socket.close()
 
             self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])   # set successor and connect
@@ -94,8 +99,6 @@ class SpreadSheetServer:
         except Exception as e:
             print(e)
             print('first server')
-            # for i in range(FINGER_NUM):
-            #     self.finger_table[i][1], self.finger_table[i][2], self.finger_table[i][3], self.finger_table[i][4] = self.node_id, self.host, self.port, None
 
     def _establish_chord(self):
 
@@ -147,65 +150,76 @@ class SpreadSheetServer:
 
     def handle_request(self, request, socket):
         try:
-            method = request.get("method")
-            # key = int(sha256(f"{key},{col}".encode()).hexdigest(), 16) % 2**32  # Calculate key
+            if "status" in request: # response
+                self.send_message(self.message_dic[request.get("msg_id")][0], request)
+                del self.message_dic[request.get("msg_id")]
 
-            # if self.find_successor(key) != self.node_id:
-            #     # Route request to the responsible node (using an RPC call)
-            #     successor = self.find_successor(key)
-            #     self.forward_request_to_successor(successor, request)
-            #     return {"status": "forwarded", "node": successor}
+            else:   # request
+                method = request.get("method")
 
-            # If the node is responsible, handle the request
-            if method == "insert":
-                key = request.get("key")
-                return self.spreadsheet.insert(key, request["value"])
-            elif method == "lookup":
-                key = request.get("key")
-                return self.spreadsheet.lookup(key)
-            elif method == "remove":
-                key = request.get("key")
-                return self.spreadsheet.remove(key)
-            elif method == "join":
-                # TODO: route, return port + host of successor
-                return {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
-            elif method == "imYourPred":
-                pred_host, pred_port = request.get("host"), request.get("port")
+                # If the node is responsible, handle the request
+                if "key" not in request or self._isResponsible(request.get("key")):  # perform the request, return result
+                    # spreadsheet operations
+                    if method == "insert":
+                        key = request.get("key")
+                        return self.spreadsheet.insert(key, request["value"])
+                    elif method == "lookup":
+                        key = request.get("key")
+                        return self.spreadsheet.lookup(key)
+                    elif method == "remove":
+                        key = request.get("key")
+                        return self.spreadsheet.remove(key)
 
-                if not self.predecessor:    # new node or node1 receiving
-                    if not self.successor:  # node1 receiving
-                        self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
-                        self.successor = self.predecessor
-                        self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
-                    else:   # new node receives
-                        self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                    # new node ask to join chord, the node happens to be its successor
+                    elif method == "join":
+                        message = {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
+
+                    elif method == "imYourPred":
+                        pred_host, pred_port = request.get("host"), request.get("port")
+
+                        if not self.predecessor:    # new node or node1 receiving
+                            if not self.successor:  # node1 receiving
+                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                                self.successor = self.predecessor
+                                self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
+                            else:   # new node receives
+                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                                # update finger table to include predecessor
+                                self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port)
+                        else:   # ring member receives
+                            # inform predecessor
+                            self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
+                            self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                            # TODO: notify all its PT of new pred's existance
+
+                            # TODO: help predecessor to establish finger table
+                            # for i in range(FINGER_NUM):
+                            #     target_id = (self.predecessor.node_id + 2**i) % MAX_KEY
+                            #     route_target = self._route(target_id)
+                            #     print(f'{target_id} routes to {route_target}')
+
                         # update finger table to include predecessor
                         self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port)
-                else:   # ring member receives
-                    # inform predecessor
-                    self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
-                    self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
-                    # TODO: notify all its PT of new pred's existance
 
-                    # TODO: help predecessor to establish finger table
-                    # for i in range(FINGER_NUM):
-                    #     target_id = (self.predecessor.node_id + 2**i) % MAX_KEY
-                    #     route_target = self._route(target_id)
-                    #     print(f'{target_id} routes to {route_target}')
+                    elif method == "yourNewSucc":
+                        succ_host, succ_port = request.get("host"), request.get("port")
+                        self.successor = Node(succ_host, succ_port, request.get("node_id"))
+                        # update finger table to include successor
+                        self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port)
+                        self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
+                    else:
+                        pass
+                else:   
+                    if "msg_id" not in request: # client reach out to chord, add msg_id to the request
+                        request["msg_id"] = f"{self.node_id}_{self.msg_counter}"
+                        self.msg_counter += 1
+                    # route to key
+                    next_socket = self._route(request["key"], request)
+                    self.message_dic[request["msg_id"]] = (socket, next_socket)
 
-                # update finger table to include predecessor
-                self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port)
-
-                        
-            elif method == "yourNewSucc":
-                succ_host, succ_port = request.get("host"), request.get("port")
-                self.successor = Node(succ_host, succ_port, request.get("node_id"))
-                # update finger table to include successor
-                self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port)
-                self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
-            else:
-                # return {"status": "error", "message": f"Invalid method: {method}. (insert/lookup/remove)"}
-                pass
         except Exception as e:
             print("error in handling request")
             print(e)
@@ -217,22 +231,36 @@ class SpreadSheetServer:
             return start < val <= end
         return not (end < val <= start)
 
-    def _route(self, target_id):
+    def _isResponsible(self, key):
+        """ test if is responsible for this key (lookup) """
+        if not self.predecessor: return True
+        return self._inInterval(self.predecessor.node_id, self.node_id, key)
+
+    def _route(self, target_id, message):
         """ route target_id based on finger table """
         for i in range(FINGER_NUM):
             last = self.finger_table[i-1][1]
             curr = self.finger_table[i][1]
             if self._inInterval(last, curr, target_id):
-                return self.finger_table[i]
+                print(f"routing to {self.finger_table[i][1]}")
+                if self.finger_table[i][-1]:
+                    self.send_message(self.finger_table[i][-1], message)
+                    return self.finger_table[i][-1]
+        # no match => only two nodes, so route to the other node
+        self.send_message(self.finger_table[0][-1], message)
+        return self.finger_table[0][-1]
 
     def update_finger_table(self, joining_node_id, joining_host, joining_port):
         """ Update the finger table entries when a new node joins. """
         for i in range(FINGER_NUM):
             if self._inInterval(self.finger_table[i][0], self.finger_table[i][1], joining_node_id):
                 self.finger_table[i][1:] = joining_node_id, joining_host, joining_port, None
+                if self.predecessor and joining_node_id == self.predecessor.node_id:
+                    self.finger_table[i][-1] = self.predecessor.socket
+                if self.successor and joining_node_id == self.successor.node_id:
+                    self.finger_table[i][-1] = self.successor.socket
                 
 
-                
 
     # def join(self, existing_node_id):
     #     """ Join an existing Chord ring. """
