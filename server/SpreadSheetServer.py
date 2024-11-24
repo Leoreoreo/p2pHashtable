@@ -230,6 +230,9 @@ class SpreadSheetServer:
 
                     elif method == "updatePFT":
                         self.pred_finger_table = request.get("PFT")
+                    
+                    elif method == "askForFT":
+                        return {"FT": [row[:-1] for row in self.finger_table]}
                     else:
                         pass
                 else:   # not responsible, route to target "key"
@@ -279,10 +282,6 @@ class SpreadSheetServer:
                     self.finger_table[i][-1] = self.predecessor.socket
                 if self.successor and joining_node_id == self.successor.node_id:
                     self.finger_table[i][-1] = self.successor.socket
-        
-        # inform successor to updatePFT
-        self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
-                
 
 
     # def join(self, existing_node_id):
