@@ -39,7 +39,7 @@ def print_info(server): # print connection infos every 5 sec
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
         print("\n")
-        print("\n\tpointed_table: ")
+        print("\tpointed_table: ")
         for node_id, row in server.pointed_table.items():
             print(f'{node_id}\t{row[:-1]}')
         print("\n")
@@ -252,7 +252,7 @@ class SpreadSheetServer:
                             del self.pointed_table[request.get("node_id")]
                     
                     elif method == "newNode":
-
+                        self.update_finger_table(request.get("node_id"), request.get("host"), request.get("port"), True)
                         pass
 
                     elif method == "updatePFT":
@@ -311,6 +311,9 @@ class SpreadSheetServer:
                     self.finger_table[i][-1] = self.predecessor.socket
                 if self.successor and joining_node_id == self.successor.node_id:
                     self.finger_table[i][-1] = self.successor.socket
+                if self.finger_table[i][-1] is None:
+                    self.finger_table[i][-1] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.finger_table[i][-1].connect((joining_host, joining_port))
                 if updateTargetPFT:
                     self.send_message(self.finger_table[i][-1], {"method": "imPointingAtYou", "node_id": self.node_id, "host": self.host, "port": self.port})
 
