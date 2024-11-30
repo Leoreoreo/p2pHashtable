@@ -32,18 +32,19 @@ def register_name_server(port, project_name):
 
 def print_info(server): # print connection infos every 5 sec
     while True:
-        print(f"node_id: {server.node_id}")
-        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
-        if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
-        print("\n\tfinger_table: ")
+        print(f"\nnode_id: {server.node_id}")
+        print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
-        print("\n\tpointed_table: ")
+        print(f'\n\tpointed_table ({server.node_id}): ')
         for node_id, row in server.pointed_table.items():
             print(f'{node_id}\t{row[:-1]}')
-        print(f'\n\tpred_finger_table ({self.predecessor.node_id}): ')
+        print(f'\n\tpred_finger_table ({server.predecessor.node_id if server.predecessor else None}): ')
         for target_id, node_id, host, port in server.pred_finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}')
+        print(f'\n\tpred_pointed_table ({server.predecessor.node_id if server.predecessor else None}): ')
+        for node_id, row in server.pred_pointed_table.items():
+            print(f'{node_id}\t: {row}')
         print("\n")
         time.sleep(5)
 
@@ -73,9 +74,11 @@ class SpreadSheetServer:
         self.predecessor = None 
 
         self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
-        self.pred_finger_table = []     # [[target_id, node_id, node_host, node_port]]
         self.pointed_table = {}     # {node_id: [count, node_host, node_port, socket]}
 
+        self.pred_finger_table = []     # [[target_id, node_id, node_host, node_port]]
+        self.pred_pointed_table = {}    # {node_id: [count, node_host, node_port]}
+        
         self.message_dic = {}       # incoming messages: {msg_id: (source_sock, target_sock)}
         self.msg_counter = 0    # self unique msg_id
 
@@ -112,6 +115,7 @@ class SpreadSheetServer:
     def _establish_chord(self):
         # establish finger table
         print("establishing finger table")
+        affected_sockets = set()
         for i in range(FINGER_NUM):
             response_data = self.send_request(self.successor.socket, {"method": "establishChord", "key": self.finger_table[i][0]})
             if "node_id" not in response_data:  # route back to itself => it is responsible
@@ -128,18 +132,22 @@ class SpreadSheetServer:
                     for sock, addr in self.client_sockets.items():  # check if already in socket list
                         if addr[0] == host and addr[1] == port:
                             self.finger_table[i][1:] = node_id, host, port, sock
+                            affected_sockets.add(sock)
                             self.send_message(sock, {"method": "imPointingAtYou", "host": self.host, "port": self.port, "node_id": self.node_id})
                             exist = True
                             break
                     if not exist:
                         finger_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         finger_socket.connect((host, port))
+                        affected_sockets.add(finger_socket)
                         self.finger_table[i][1:] = node_id, host, port, finger_socket
                         self.send_message(finger_socket, {"method": "imPointingAtYou", "host": self.host, "port": self.port, "node_id": self.node_id})
             except Exception as e:
                 print(f"Error establishing chord: {e}")
         # inform successor to updatePFT
         self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
+        for sock in affected_sockets | {self.successor.socket}:
+            self.send_message(sock, {"method": "chordEstablishmentCompleted"})
 
     def send_request(self, socket, request):
         try:
@@ -207,6 +215,8 @@ class SpreadSheetServer:
                                 # update finger table to include predecessor
                                 self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, True)
                                 self.successor = self.predecessor
+                                # inform successor to update pred_pointed_table
+                                self.send_message(self.successor.socket, {"method": "updatePPT", "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}})
                                 self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
                             else:   # new node receives
                                 self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
@@ -219,13 +229,15 @@ class SpreadSheetServer:
                             self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
                             # update finger table to include predecessor
                             self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, True)
-                            # TODO: notify all its PT of new pred's existance
+                            # notify all its PT of new pred's existance
                             for node_id, row in self.pointed_table.items():
                                 self.send_message(row[-1], {"method": "newNode", "node_id": self.predecessor.node_id, "host": self.predecessor.host, "port": self.predecessor.port})
+                            
 
                     elif method == "yourNewSucc":
                         succ_host, succ_port = request.get("host"), request.get("port")
                         self.successor = Node(succ_host, succ_port, request.get("node_id"))
+                        self.send_message(self.successor.socket, {"method": "updatePPT", "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}})
                         # update finger table to include successor
                         self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port, True)
                         self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
@@ -241,12 +253,17 @@ class SpreadSheetServer:
                             self.pointed_table[request.get("node_id")][0] += 1
                         else:
                             self.pointed_table[request.get("node_id")] = [1, request.get("host"), request.get("port"), socket]
-                    
+
                     elif method == "imNotPointingAtYou":
                         self.pointed_table[request.get("node_id")][0] -= 1
                         if self.pointed_table[request.get("node_id")][0] == 0:
                             del self.pointed_table[request.get("node_id")]
-                    
+
+                    elif method == "chordEstablishmentCompleted":
+                        # inform successor to update pred_pointed_table
+                        if self.successor:
+                            self.send_message(self.successor.socket, {"method": "updatePPT", "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}})
+                            
                     elif method == "newNode":
                         self.update_finger_table(request.get("node_id"), request.get("host"), request.get("port"), True)
                         pass
@@ -254,6 +271,9 @@ class SpreadSheetServer:
                     elif method == "updatePFT":
                         self.pred_finger_table = request.get("PFT")
                     
+                    elif method == "updatePPT":
+                        self.pred_pointed_table = request.get("PPT")
+
                     elif method == "askForFT":
                         return {"FT": [row[:-1] for row in self.finger_table]}
                     else:
@@ -298,10 +318,12 @@ class SpreadSheetServer:
 
     def update_finger_table(self, joining_node_id, joining_host, joining_port, updateTargetPT):
         """ Update the finger table entries when a new node joins. """
+        affected_sockets = set()
         for i in range(FINGER_NUM):
             if self._inInterval(self.finger_table[i][0], self.finger_table[i][1], joining_node_id) and joining_node_id != self.finger_table[i][1]:
                 if self.finger_table[i][-1]:
                     self.send_message(self.finger_table[i][-1], {"method": "imNotPointingAtYou", "node_id": self.node_id})
+                    affected_sockets.add(self.finger_table[i][-1])
                 self.finger_table[i][1:] = joining_node_id, joining_host, joining_port, None
                 if self.predecessor and joining_node_id == self.predecessor.node_id:
                     self.finger_table[i][-1] = self.predecessor.socket
@@ -312,10 +334,13 @@ class SpreadSheetServer:
                     self.finger_table[i][-1].connect((joining_host, joining_port))
                 if updateTargetPT:  # inform target to update pointed_table
                     self.send_message(self.finger_table[i][-1], {"method": "imPointingAtYou", "node_id": self.node_id, "host": self.host, "port": self.port})
+                    affected_sockets.add(self.finger_table[i][-1])
         # inform successor to update pred_finger_table
-        if self.successor:
+        if self.successor and self.successor.socket:
             self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
-
+            # affected_sockets.add(self.successor.socket)
+        for sock in affected_sockets:
+            self.send_message(sock, {"method": "chordEstablishmentCompleted"})
                 # exist = False
                 # for sock, addr in self.client_sockets.items():  # check if already in socket list
                 #     if addr[0] == joining_host and addr[1] == joining_port:
