@@ -38,15 +38,13 @@ def print_info(server): # print connection infos every 5 sec
         print("\n\tfinger_table: ")
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
-        print("\n")
-        print("\tpointed_table: ")
+        print("\n\tpointed_table: ")
         for node_id, row in server.pointed_table.items():
             print(f'{node_id}\t{row[:-1]}')
+        print(f'\n\tpred_finger_table ({self.predecessor.node_id}): ')
+        for target_id, node_id, host, port in server.pred_finger_table:
+            print(f'{target_id}\t{node_id}\t: {host}:{port}')
         print("\n")
-        # print("\n\tpred_finger_table: ")
-        # for target_id, node_id, host, port in server.pred_finger_table:
-        #     print(f'{target_id}\t{node_id}\t: {host}:{port}')
-        # print("\n")
         time.sleep(5)
 
 class Node:
@@ -225,8 +223,6 @@ class SpreadSheetServer:
                             for node_id, row in self.pointed_table.items():
                                 self.send_message(row[-1], {"method": "newNode", "node_id": self.predecessor.node_id, "host": self.predecessor.host, "port": self.predecessor.port})
 
-                        
-
                     elif method == "yourNewSucc":
                         succ_host, succ_port = request.get("host"), request.get("port")
                         self.successor = Node(succ_host, succ_port, request.get("node_id"))
@@ -300,7 +296,7 @@ class SpreadSheetServer:
         self.send_message(self.finger_table[0][-1], message)
         return self.finger_table[0][-1]
 
-    def update_finger_table(self, joining_node_id, joining_host, joining_port, updateTargetPFT):
+    def update_finger_table(self, joining_node_id, joining_host, joining_port, updateTargetPT):
         """ Update the finger table entries when a new node joins. """
         for i in range(FINGER_NUM):
             if self._inInterval(self.finger_table[i][0], self.finger_table[i][1], joining_node_id) and joining_node_id != self.finger_table[i][1]:
@@ -314,8 +310,11 @@ class SpreadSheetServer:
                 if self.finger_table[i][-1] is None:
                     self.finger_table[i][-1] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     self.finger_table[i][-1].connect((joining_host, joining_port))
-                if updateTargetPFT:
+                if updateTargetPT:  # inform target to update pointed_table
                     self.send_message(self.finger_table[i][-1], {"method": "imPointingAtYou", "node_id": self.node_id, "host": self.host, "port": self.port})
+        # inform successor to update pred_finger_table
+        if self.successor:
+            self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
 
                 # exist = False
                 # for sock, addr in self.client_sockets.items():  # check if already in socket list
