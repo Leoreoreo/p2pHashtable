@@ -191,13 +191,22 @@ class SpreadSheetServer:
                     # spreadsheet operations
                     if method == "insert":
                         key = request.get("key")
-                        return self.spreadsheet.insert(key, request["value"])
+                        message = self.spreadsheet.insert(key, request["value"])
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
                     elif method == "lookup":
                         key = request.get("key")
-                        return self.spreadsheet.lookup(key)
+                        message = self.spreadsheet.lookup(key)
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
                     elif method == "remove":
                         key = request.get("key")
-                        return self.spreadsheet.remove(key)
+                        message = self.spreadsheet.remove(key)
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
 
                     # new node ask to join chord, the node happens to be its successor
                     elif method == "join":
