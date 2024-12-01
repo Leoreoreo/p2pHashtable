@@ -5,6 +5,8 @@ import time
 from SpreadSheetClient import SpreadSheetClient
 import os
 
+FINGER_NUM  = 16
+MAX_KEY     = 2 ** FINGER_NUM
 
 def measure(client, operation, *args):
     start = time.time()
@@ -21,7 +23,8 @@ if __name__ == "__main__":
     pid = os.getpid()
     
     iterations = 1000
-    start_val = (pid % 10) * iterations * 10
+    start_val = ((pid % 10) * iterations * 10) % MAX_KEY
+    print(f"inserting {start_val} - {(start_val + iterations)%MAX_KEY}")
 
     # insert  
     total_insert_time = 0
@@ -37,15 +40,15 @@ if __name__ == "__main__":
         total_lookup_time += duration
     print("lookup complete")
 
-    # # remove  
-    # total_remove_time = 0
-    # for i in range(start_val, start_val+iterations):
-    #     result, duration = measure(client, client.remove, i)
-    #     total_remove_time += duration
+    # remove  
+    total_remove_time = 0
+    for i in range(start_val, start_val+iterations):
+        result, duration = measure(client, client.remove, i)
+        total_remove_time += duration
 
-    # print("remove complete")
+    print("remove complete")
 
     print()
     print(f"insert\tthroughput: {iterations / total_insert_time:4.6f}\tops/sec\tlatency: {total_insert_time / iterations:.6f} sec")
     print(f"lookup\tthroughput: {iterations / total_lookup_time:4.6f}\tops/sec\tlatency: {total_lookup_time / iterations:.6f} sec")
-    # print(f"remove\tthroughput: {iterations / total_remove_time:4.6f}\tops/sec\tlatency: {total_remove_time / iterations:.6f} sec")
+    print(f"remove\tthroughput: {iterations / total_remove_time:4.6f}\tops/sec\tlatency: {total_remove_time / iterations:.6f} sec")
