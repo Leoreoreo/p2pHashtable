@@ -338,19 +338,9 @@ class SpreadSheetServer:
         # inform successor to update pred_finger_table
         if self.successor and self.successor.socket:
             self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
-            # affected_sockets.add(self.successor.socket)
         for sock in affected_sockets:
             self.send_message(sock, {"method": "chordEstablishmentCompleted"})
-                # exist = False
-                # for sock, addr in self.client_sockets.items():  # check if already in socket list
-                #     if addr[0] == joining_host and addr[1] == joining_port:
-                #         self.finger_table[i][-1] = sock
-                        
-                #         self.send_message(sock, {"method": "imPointingAtYou", "host": self.host, "port": self.port, "node_id": self.node_id})
-                #         exist = True
-                #         break
-                # if not exist:
-                #     pass
+
 
 def start_server(project_name, node_id):
     
