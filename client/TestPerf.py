@@ -1,7 +1,16 @@
 # TestPerf
 
 import sys
+import time
 from SpreadSheetClient import SpreadSheetClient
+import os
+
+
+def measure(client, operation, *args):
+    start = time.time()
+    result = operation(*args)
+    end = time.time()
+    return result, end - start
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -9,12 +18,34 @@ if __name__ == "__main__":
         sys.exit(1)
     project_name = sys.argv[1]
     client = SpreadSheetClient(project_name)
+    pid = os.getpid()
+    
+    iterations = 1000
+    start_val = (pid % 10) * iterations * 10
 
-    print(client.insert(114, {"weight": 100, "animal": "zebra"}))
-    print(client.lookup(114))
-    print(client.lookup(115))
+    # insert  
+    total_insert_time = 0
+    for i in range(start_val, start_val+iterations):
+        result, duration = measure(client, client.insert, i, {"value": i})
+        total_insert_time += duration
+    print("insert complete")
+    
+    # lookup  
+    total_lookup_time = 0
+    for i in range(start_val, start_val+iterations):
+        result, duration = measure(client, client.lookup, i)
+        total_lookup_time += duration
+    print("lookup complete")
 
-    print(client.remove(114))
-    print(client.lookup(114))
+    # remove  
+    total_remove_time = 0
+    for i in range(start_val, start_val+iterations):
+        result, duration = measure(client, client.remove, i)
+        total_remove_time += duration
 
-    # print(client.invalid_req("afgrewa"))
+    print("remove complete")
+
+    print()
+    print(f"insert\tthroughput: {iterations / total_insert_time:4.6f}\tops/sec\tlatency: {total_insert_time / iterations:.6f} sec")
+    print(f"lookup\tthroughput: {iterations / total_lookup_time:4.6f}\tops/sec\tlatency: {total_lookup_time / iterations:.6f} sec")
+    print(f"remove\tthroughput: {iterations / total_remove_time:4.6f}\tops/sec\tlatency: {total_remove_time / iterations:.6f} sec")

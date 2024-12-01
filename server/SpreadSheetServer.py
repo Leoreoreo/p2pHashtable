@@ -301,26 +301,26 @@ class SpreadSheetServer:
             # return {"status": "error", "message": f"Invalid request {request}; method required"}
     
     def _inInterval(self, start, end, val):
-        """ test if val is in (start, end] in the chord """
+        """ test if val is in [start, end) in the chord """
         if start <= end:
-            return start < val <= end
-        return not (end < val <= start)
+            return start <= val < end
+        return not (end <= val < start)
 
     def _isResponsible(self, key):
         """ test if is responsible for this key (lookup) """
         if not self.predecessor: return True
-        return self._inInterval(self.predecessor.node_id, self.node_id, key)
+        return self._inInterval(self.predecessor.node_id+1, self.node_id+1, key)
 
     def _route(self, target_id, message):
         """ route target_id based on finger table """
         for i in range(FINGER_NUM):
-            last = self.finger_table[i-1][1]
-            curr = self.finger_table[i][1]
+            last = self.finger_table[i-1][0]
+            curr = self.finger_table[i][0]
             if self._inInterval(last, curr, target_id):
-                print(f"routing to {self.finger_table[i][1]}")
-                if self.finger_table[i][-1]:
-                    self.send_message(self.finger_table[i][-1], message)
-                    return self.finger_table[i][-1]
+                print(f"routing to {self.finger_table[i-1][1]}")
+                if self.finger_table[i-1][-1]:
+                    self.send_message(self.finger_table[i-1][-1], message)
+                    return self.finger_table[i-1][-1]
         # no match => only two nodes, so route to the other node
         self.send_message(self.finger_table[0][-1], message)
         return self.finger_table[0][-1]
