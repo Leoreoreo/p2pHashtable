@@ -10,10 +10,14 @@ from SpreadSheet import SpreadSheet
 import select
 import requests
 
+# ---------------------------------globals---------------------------------
 FINGER_NUM  = 16
 MAX_KEY     = 2 ** FINGER_NUM
 
+# ------------------------background thread functions----------------------
+
 def register_name_server(port, project_name):
+    """ register to name server once a minute """
     name_server_address = ("catalog.cse.nd.edu", 9097)
     while True:
         message = {
@@ -30,7 +34,8 @@ def register_name_server(port, project_name):
         # register once a minute
         time.sleep(60)
 
-def print_info(server): # print connection infos every 5 sec
+def print_info(server): 
+    """ print connection infos every 5 sec """
     while True:
         print(f"\nnode_id: {server.node_id}")
         print(f"\ndata size: {len(server.spreadsheet.data)}")
@@ -49,7 +54,9 @@ def print_info(server): # print connection infos every 5 sec
         print("\n")
         time.sleep(5)
 
+# ---------------------------------Classes---------------------------------
 class Node:
+    """ Node: used by SpreadSheetServer's predecessor and successor"""
     def __init__(self, host, port, node_id, sock=None):
         self.host = host
         self.port = int(port)
@@ -60,7 +67,9 @@ class Node:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.host, self.port))
 
+
 class SpreadSheetServer:
+    """ SpreadSheetServer: the server class """
     def __init__(self, project_name, node_id, host, port):
         self.node_id = int(node_id) % MAX_KEY
         self.project_name = f'{project_name}_{node_id}' 
@@ -68,39 +77,42 @@ class SpreadSheetServer:
         self.host = host    # master host and port
         self.port = port
         
-        self.client_sockets = {}
-        self.spreadsheet = SpreadSheet(node_id=self.node_id)
+        self.client_sockets = {}    # all other sockets connected
+        self.spreadsheet = SpreadSheet(node_id=self.node_id)    # where spreadsheet data and operations stored
 
         self.successor = None
         self.predecessor = None 
 
         self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
-        self.pointed_table = {}     # {node_id: [count, node_host, node_port, socket]}
+        self.pointed_table = {}         # {node_id: [count, node_host, node_port, socket]}
 
         self.pred_finger_table = []     # [[target_id, node_id, node_host, node_port]]
         self.pred_pointed_table = {}    # {node_id: [count, node_host, node_port]}
         
-        self.message_dic = {}       # incoming messages: {msg_id: (source_sock, target_sock)}
-        self.msg_counter = 0    # self unique msg_id
+        self.message_dic = {}       # stores incoming messages: {msg_id: (source_sock, target_sock)}
+        self.msg_counter = 0        # self unique msg_id counter
 
-        self._join()
+        self._join()    # call join() to join the chord
     
 
     def _join(self):
         """ New node tries to join existing chord system """
         try:
             # connect to a random server, and send join request
-            response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
+            response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # connect to name server
             services = response.json()
+
+            # select a random server (last active)
             # TODO: retry connecting to service (loop through all possible names)
             service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]], key=lambda x: x.get("lastheardfrom"))
             random_host = service.get("name")
             random_port = service.get("port")
             join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            join_socket.connect((random_host, random_port))
+            join_socket.connect((random_host, random_port)) # connect to this server, and send join request
             response_data = self.send_request(join_socket, {"method": "join", "key": self.node_id})  # get successor addr from response
             join_socket.close()
 
+            # connect to successor
             self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])   # set successor and connect
             # update finger table to include successor
             self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port, False)
@@ -108,13 +120,13 @@ class SpreadSheetServer:
             
             self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id}) # inform successor of its pred
 
-
         except Exception as e:
             print(e)
             print('first server')
 
+
     def _establish_chord(self):
-        # establish finger table
+        """ establish finger table """
         print("establishing finger table")
         affected_sockets = set()
         for i in range(FINGER_NUM):
@@ -150,7 +162,9 @@ class SpreadSheetServer:
         for sock in affected_sockets | {self.successor.socket}:
             self.send_message(sock, {"method": "chordEstablishmentCompleted"})
 
+
     def send_request(self, socket, request):
+        """ send request (returns response) """
         try:
             print(f'sending request: {request}')
             request_data = f'{json.dumps(request)}\n'.encode('utf-8')
@@ -169,7 +183,9 @@ class SpreadSheetServer:
         except Exception as e:
             print(f"Request: {request}\n Error: {e}\n")
     
+
     def send_message(self, socket, message):
+        """ send message (returns nothing) """
         try:
             print(f'sending message: {message}')
             message_data = f'{json.dumps(message)}\n'.encode('utf-8')
@@ -179,6 +195,7 @@ class SpreadSheetServer:
             print(f"message: {message}\n Error: {e}\n")
 
     def handle_request(self, request, socket):
+        """ handle incoming messages / requests (returns nothing) """
         try:
             if "status" in request:     # response
                 self.send_message(self.message_dic[request.get("msg_id")][0], request)
@@ -367,7 +384,7 @@ def start_server(project_name, node_id):
         print(f"Listening on port {server.port}")
         if server.successor:
             print(server.successor.node_id)
-        # Background thread to register with the name server
+        # Background threads
         threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
         threading.Thread(target=print_info, args=(server,), daemon=True).start()
 
