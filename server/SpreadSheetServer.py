@@ -196,6 +196,9 @@ class SpreadSheetServer:
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
                         self.send_message(socket, message)
+                        self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": request["value"]})
+                    elif method == "insert_replication":
+                        self.spreadsheet.insert(request["repli_key"], request["value"])
                     elif method == "lookup":
                         key = request.get("key")
                         message = self.spreadsheet.lookup(key)
@@ -208,6 +211,9 @@ class SpreadSheetServer:
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
                         self.send_message(socket, message)
+                        self.send_message(self.successor.socket, {"method": "remove_replication", "repli_key": key})
+                    elif method == "remove_replication":
+                        self.spreadsheet.remove(request["repli_key"])
 
                     # new node ask to join chord, the node happens to be its successor
                     elif method == "join":
