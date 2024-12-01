@@ -33,6 +33,7 @@ def register_name_server(port, project_name):
 def print_info(server): # print connection infos every 5 sec
     while True:
         print(f"\nnode_id: {server.node_id}")
+        print(f"\ndata size: {len(server.spreadsheet.data)}")
         print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')

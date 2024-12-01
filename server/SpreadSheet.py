@@ -43,20 +43,28 @@ class SpreadSheet:
         print("recover complete")
         print(self.data)
 
-    # save RAM data into ckpt, clear the log
     def _compact_log(self):
-        # save RAM data into ckpt_new file
+        # Ensure the checkpoint directory exists
+        os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
+        
+        # Save RAM data into ckpt_new file
         try:
-            with open(self.ckpt_path+'_new', "w") as newckpt:
+            with open(self.ckpt_path + '_new', "w") as newckpt:
                 json.dump(self.data, newckpt)
                 newckpt.flush()
                 os.fsync(newckpt.fileno())
         except Exception as e:
             print(f"Error writing checkpoint: {e}")
             return
-        # replace the old ckpt: by renaming ckpt_new into ckpt
-        os.rename(self.ckpt_path+'_new', self.ckpt_path)
-        # clear the log: by closing log, open it in w and close it, and then re-open it
+        
+        # Replace the old ckpt: by renaming ckpt_new into ckpt
+        try:
+            os.rename(self.ckpt_path + '_new', self.ckpt_path)
+        except Exception as e:
+            print(f"Error renaming checkpoint: {e}")
+            return
+        
+        # Clear the log: by closing log, open it in write mode, and re-open it for appending
         self.log.close()
         with open(self.log_path, 'w') as f:
             pass
