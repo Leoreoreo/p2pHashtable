@@ -33,6 +33,7 @@ def register_name_server(port, project_name):
 def print_info(server): # print connection infos every 5 sec
     while True:
         print(f"\nnode_id: {server.node_id}")
+        print(f"\ndata size: {len(server.spreadsheet.data)}")
         print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
@@ -191,13 +192,22 @@ class SpreadSheetServer:
                     # spreadsheet operations
                     if method == "insert":
                         key = request.get("key")
-                        return self.spreadsheet.insert(key, request["value"])
+                        message = self.spreadsheet.insert(key, request["value"])
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
                     elif method == "lookup":
                         key = request.get("key")
-                        return self.spreadsheet.lookup(key)
+                        message = self.spreadsheet.lookup(key)
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
                     elif method == "remove":
                         key = request.get("key")
-                        return self.spreadsheet.remove(key)
+                        message = self.spreadsheet.remove(key)
+                        if request.get("msg_id"):
+                            message["msg_id"] = request.get("msg_id")
+                        self.send_message(socket, message)
 
                     # new node ask to join chord, the node happens to be its successor
                     elif method == "join":
@@ -292,26 +302,26 @@ class SpreadSheetServer:
             # return {"status": "error", "message": f"Invalid request {request}; method required"}
     
     def _inInterval(self, start, end, val):
-        """ test if val is in (start, end] in the chord """
+        """ test if val is in [start, end) in the chord """
         if start <= end:
-            return start < val <= end
-        return not (end < val <= start)
+            return start <= val < end
+        return not (end <= val < start)
 
     def _isResponsible(self, key):
         """ test if is responsible for this key (lookup) """
         if not self.predecessor: return True
-        return self._inInterval(self.predecessor.node_id, self.node_id, key)
+        return self._inInterval(self.predecessor.node_id+1, self.node_id+1, key)
 
     def _route(self, target_id, message):
         """ route target_id based on finger table """
         for i in range(FINGER_NUM):
-            last = self.finger_table[i-1][1]
-            curr = self.finger_table[i][1]
+            last = self.finger_table[i-1][0]
+            curr = self.finger_table[i][0]
             if self._inInterval(last, curr, target_id):
-                print(f"routing to {self.finger_table[i][1]}")
-                if self.finger_table[i][-1]:
-                    self.send_message(self.finger_table[i][-1], message)
-                    return self.finger_table[i][-1]
+                print(f"routing to {self.finger_table[i-1][1]}")
+                if self.finger_table[i-1][-1]:
+                    self.send_message(self.finger_table[i-1][-1], message)
+                    return self.finger_table[i-1][-1]
         # no match => only two nodes, so route to the other node
         self.send_message(self.finger_table[0][-1], message)
         return self.finger_table[0][-1]
@@ -338,19 +348,9 @@ class SpreadSheetServer:
         # inform successor to update pred_finger_table
         if self.successor and self.successor.socket:
             self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
-            # affected_sockets.add(self.successor.socket)
         for sock in affected_sockets:
             self.send_message(sock, {"method": "chordEstablishmentCompleted"})
-                # exist = False
-                # for sock, addr in self.client_sockets.items():  # check if already in socket list
-                #     if addr[0] == joining_host and addr[1] == joining_port:
-                #         self.finger_table[i][-1] = sock
-                        
-                #         self.send_message(sock, {"method": "imPointingAtYou", "host": self.host, "port": self.port, "node_id": self.node_id})
-                #         exist = True
-                #         break
-                # if not exist:
-                #     pass
+
 
 def start_server(project_name, node_id):
     
