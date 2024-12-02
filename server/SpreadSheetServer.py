@@ -10,10 +10,14 @@ from SpreadSheet import SpreadSheet
 import select
 import requests
 
+# ---------------------------------globals---------------------------------
 FINGER_NUM  = 16
 MAX_KEY     = 2 ** FINGER_NUM
 
+# ------------------------background thread functions----------------------
+
 def register_name_server(port, project_name):
+    """ register to name server once a minute """
     name_server_address = ("catalog.cse.nd.edu", 9097)
     while True:
         message = {
@@ -30,10 +34,13 @@ def register_name_server(port, project_name):
         # register once a minute
         time.sleep(60)
 
-def print_info(server): # print connection infos every 5 sec
+def print_info(server): 
+    """ print connection infos every 5 sec """
     while True:
         print(f"\nnode_id: {server.node_id}")
-        print(f"\ndata size: {len(server.spreadsheet.data)}")
+        print(f"data size: {len(server.spreadsheet.data)}")
+        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
+        if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
         print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
@@ -49,7 +56,9 @@ def print_info(server): # print connection infos every 5 sec
         print("\n")
         time.sleep(5)
 
+# ---------------------------------Classes---------------------------------
 class Node:
+    """ Node: used by SpreadSheetServer's predecessor and successor"""
     def __init__(self, host, port, node_id, sock=None):
         self.host = host
         self.port = int(port)
@@ -60,7 +69,9 @@ class Node:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.host, self.port))
 
+
 class SpreadSheetServer:
+    """ SpreadSheetServer: the server class """
     def __init__(self, project_name, node_id, host, port):
         self.node_id = int(node_id) % MAX_KEY
         self.project_name = f'{project_name}_{node_id}' 
@@ -68,39 +79,44 @@ class SpreadSheetServer:
         self.host = host    # master host and port
         self.port = port
         
-        self.client_sockets = {}
-        self.spreadsheet = SpreadSheet(node_id=self.node_id)
+        self.client_sockets = {}    # all other sockets connected
+        self.spreadsheet = SpreadSheet(node_id=self.node_id)    # where spreadsheet data and operations stored
 
         self.successor = None
         self.predecessor = None 
 
         self.finger_table = [[(self.node_id + 2**i) % MAX_KEY, self.node_id, self.host, self.port, None] for i in range(FINGER_NUM)]      # [[target_id, node_id, node_host, node_port, socket]]
-        self.pointed_table = {}     # {node_id: [count, node_host, node_port, socket]}
+        self.pointed_table = {}         # {node_id: [count, node_host, node_port, socket]}
 
         self.pred_finger_table = []     # [[target_id, node_id, node_host, node_port]]
         self.pred_pointed_table = {}    # {node_id: [count, node_host, node_port]}
         
-        self.message_dic = {}       # incoming messages: {msg_id: (source_sock, target_sock)}
-        self.msg_counter = 0    # self unique msg_id
+        self.message_dic = {}       # stores incoming messages: {msg_id: (source_sock, target_sock)}
+        self.msg_counter = 0        # self unique msg_id counter
 
-        self._join()
+        self._join()    # call join() to join the chord
+
+        self.flag = 0
     
 
     def _join(self):
         """ New node tries to join existing chord system """
         try:
             # connect to a random server, and send join request
-            response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
+            response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # connect to name server
             services = response.json()
+
+            # select a random server (last active)
             # TODO: retry connecting to service (loop through all possible names)
             service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]], key=lambda x: x.get("lastheardfrom"))
             random_host = service.get("name")
             random_port = service.get("port")
             join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            join_socket.connect((random_host, random_port))
+            join_socket.connect((random_host, random_port)) # connect to this server, and send join request
             response_data = self.send_request(join_socket, {"method": "join", "key": self.node_id})  # get successor addr from response
             join_socket.close()
 
+            # connect to successor
             self.successor = Node(response_data["host"], response_data["port"], response_data["node_id"])   # set successor and connect
             # update finger table to include successor
             self.update_finger_table(self.successor.node_id, self.successor.host, self.successor.port, False)
@@ -108,13 +124,13 @@ class SpreadSheetServer:
             
             self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id}) # inform successor of its pred
 
-
         except Exception as e:
             print(e)
             print('first server')
 
+
     def _establish_chord(self):
-        # establish finger table
+        """ establish finger table """
         print("establishing finger table")
         affected_sockets = set()
         for i in range(FINGER_NUM):
@@ -150,7 +166,31 @@ class SpreadSheetServer:
         for sock in affected_sockets | {self.successor.socket}:
             self.send_message(sock, {"method": "chordEstablishmentCompleted"})
 
+    def handle_pred_failure(self):
+        """ handle predecessor failure """
+        # inform all nodes pointed by my predecessor that they are no longer pointed
+        for target_id, node_id, host, port in self.pred_finger_table:
+            if node_id == self.node_id:
+                self.pointed_table[self.predecessor.node_id][0] -= 1
+                if self.pointed_table[self.predecessor.node_id][0] == 0:
+                    del self.pointed_table[self.predecessor.node_id]
+                continue
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+            self.send_message(sock, {"method": "imNotPointingAtYou", "node_id": self.predecessor.node_id})
+            sock.close()
+        # inform all nodes pointing at my predecessor that I'm taking over
+        for node_id, row in self.pred_pointed_table.items():
+            _, host, port = row
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+            self.flag += 1
+            self.send_message(sock, {"method": "takeover", "old_id": self.predecessor.node_id, "new_id": self.node_id, "host": self.host, "port": self.port})
+            sock.close()
+        
+
     def send_request(self, socket, request):
+        """ send request (returns response) """
         try:
             print(f'sending request: {request}')
             request_data = f'{json.dumps(request)}\n'.encode('utf-8')
@@ -169,7 +209,9 @@ class SpreadSheetServer:
         except Exception as e:
             print(f"Request: {request}\n Error: {e}\n")
     
+
     def send_message(self, socket, message):
+        """ send message (returns nothing) """
         try:
             print(f'sending message: {message}')
             message_data = f'{json.dumps(message)}\n'.encode('utf-8')
@@ -178,7 +220,8 @@ class SpreadSheetServer:
         except Exception as e:
             print(f"message: {message}\n Error: {e}\n")
 
-    def handle_request(self, request, socket):
+    def handle_request(self, request, sock):
+        """ handle incoming messages / requests (returns nothing) """
         try:
             if "status" in request:     # response
                 self.send_message(self.message_dic[request.get("msg_id")][0], request)
@@ -195,7 +238,7 @@ class SpreadSheetServer:
                         message = self.spreadsheet.insert(key, request["value"])
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
-                        self.send_message(socket, message)
+                        self.send_message(sock, message)
                         self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": request["value"]})
                     elif method == "insert_replication":
                         self.spreadsheet.insert(request["repli_key"], request["value"])
@@ -204,13 +247,13 @@ class SpreadSheetServer:
                         message = self.spreadsheet.lookup(key)
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
-                        self.send_message(socket, message)
+                        self.send_message(sock, message)
                     elif method == "remove":
                         key = request.get("key")
                         message = self.spreadsheet.remove(key)
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
-                        self.send_message(socket, message)
+                        self.send_message(sock, message)
                         self.send_message(self.successor.socket, {"method": "remove_replication", "repli_key": key})
                     elif method == "remove_replication":
                         self.spreadsheet.remove(request["repli_key"])
@@ -220,14 +263,45 @@ class SpreadSheetServer:
                         message = {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
-                        self.send_message(socket, message)
+                        self.send_message(sock, message)
+
+                    # needs to update finger table because old pointer is invalid
+                    elif method == "takeover":
+                        host = request.get("host")
+                        port = request.get("port")
+                        old_id = request.get("old_id")
+                        new_id = request.get("new_id")
+                        new_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        new_sock.connect((host, port))
+                        # update finger table
+                        for i in range(FINGER_NUM):
+                            if self.finger_table[i][1] == old_id:
+                                self.finger_table[i][1:] = new_id, host, port, new_sock
+                                self.send_message(new_sock, {"method": "imPointingAtYou", "node_id": self.node_id, "host": self.host, "port": self.port})
+                        # update successor if needed
+                        if self.successor.node_id == old_id:
+                            self.successor = Node(host, port, new_id, new_sock)
+                        self.send_message(new_sock, {"method": "flag"})
+                        # send updated FT and PT info to successor
+                        self.send_message(self.successor.socket, {"method": "imYourUpdatedPred", "node_id": self.node_id, "host": self.host, "port": self.port, "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}, "PFT": [row[:-1] for row in self.finger_table]})
+                    
+                    elif method == "flag":
+                        self.flag -= 1
+                        if self.flag == 0:
+                            # send updated FT and PT info to successor
+                            self.send_message(self.successor.socket, {"method": "imYourUpdatedPred", "node_id": self.node_id, "host": self.host, "port": self.port, "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}, "PFT": [row[:-1] for row in self.finger_table]})
+
+                    elif method == "imYourUpdatedPred":
+                        self.predecessor = Node(request.get("host"), request.get("port"), request.get("node_id"), sock)
+                        self.pred_finger_table = request.get("PFT")
+                        self.pred_pointed_table = request.get("PPT")
 
                     elif method == "imYourPred":
                         pred_host, pred_port = request.get("host"), request.get("port")
 
                         if not self.predecessor:    # new node or node1 receiving
                             if not self.successor:  # node1 receiving
-                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), sock)
                                 # update finger table to include predecessor
                                 self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, True)
                                 self.successor = self.predecessor
@@ -235,14 +309,14 @@ class SpreadSheetServer:
                                 self.send_message(self.successor.socket, {"method": "updatePPT", "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}})
                                 self.send_message(self.successor.socket, {"method": "imYourPred", "host": self.host, "port": self.port, "node_id": self.node_id})
                             else:   # new node receives
-                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                                self.predecessor = Node(pred_host, pred_port, request.get("node_id"), sock)
                                 # update finger table to include predecessor
                                 self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, False)
                                 self._establish_chord()
                         else:   # ring member receives
                             # inform predecessor
                             self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
-                            self.predecessor = Node(pred_host, pred_port, request.get("node_id"), socket)
+                            self.predecessor = Node(pred_host, pred_port, request.get("node_id"), sock)
                             # update finger table to include predecessor
                             self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, True)
                             # notify all its PT of new pred's existance
@@ -262,13 +336,13 @@ class SpreadSheetServer:
                         message = {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
-                        self.send_message(socket, message)
+                        self.send_message(sock, message)
 
                     elif method == "imPointingAtYou":
                         if request.get("node_id") in self.pointed_table:
                             self.pointed_table[request.get("node_id")][0] += 1
                         else:
-                            self.pointed_table[request.get("node_id")] = [1, request.get("host"), request.get("port"), socket]
+                            self.pointed_table[request.get("node_id")] = [1, request.get("host"), request.get("port"), sock]
 
                     elif method == "imNotPointingAtYou":
                         self.pointed_table[request.get("node_id")][0] -= 1
@@ -282,7 +356,6 @@ class SpreadSheetServer:
                             
                     elif method == "newNode":
                         self.update_finger_table(request.get("node_id"), request.get("host"), request.get("port"), True)
-                        pass
 
                     elif method == "updatePFT":
                         self.pred_finger_table = request.get("PFT")
@@ -300,7 +373,7 @@ class SpreadSheetServer:
                         self.msg_counter += 1
                     
                     next_socket = self._route(request["key"], request)  # route to key
-                    self.message_dic[request["msg_id"]] = (socket, next_socket)
+                    self.message_dic[request["msg_id"]] = (sock, next_socket)
 
         except Exception as e:
             print("error in handling request")
@@ -367,18 +440,39 @@ def start_server(project_name, node_id):
         print(f"Listening on port {server.port}")
         if server.successor:
             print(server.successor.node_id)
-        # Background thread to register with the name server
+        # Background threads
         threading.Thread(target=register_name_server, args=(server.port, f'{project_name}_{node_id}'), daemon=True).start()
         threading.Thread(target=print_info, args=(server,), daemon=True).start()
 
         server.client_sockets = {}
         while True:
+            # check successor
             if server.successor and server.successor.socket and server.successor.socket not in server.client_sockets:
-                server.client_sockets[server.successor.socket] = (server.successor.host, server.successor.port)
+                if server.successor.socket.fileno() == -1:
+                    print("Successor socket is invalid or closed")
+                    server.successor.socket = None
+                else:
+                    server.client_sockets[server.successor.socket] = (server.successor.host, server.successor.port)
+            # check predecessor
             if server.predecessor and server.predecessor.socket and server.predecessor.socket not in server.client_sockets:
-                server.client_sockets[server.predecessor.socket] = (server.predecessor.host, server.predecessor.port)
-            for _, _, host, port, sock in server.finger_table:
-                if sock and sock not in server.client_sockets:
+                if server.predecessor.socket.fileno() == -1:
+                    print("Predecessor socket is invalid or closed")
+                    server.predecessor.socket = None
+                    server.handle_pred_failure()
+                else:
+                    server.client_sockets[server.predecessor.socket] = (server.predecessor.host, server.predecessor.port)
+            # check finger table
+            for i in range(FINGER_NUM):
+                target_id, node_id, host, port, sock = server.finger_table[i]
+                if node_id == server.node_id:   # pointing to itself => ignore
+                    continue
+                if sock is None:    # row removed => ignore
+                    continue
+                if sock.fileno() == -1: # socket invalid => reset row in finger table
+                    print(f"Fingertable socket ({node_id}) is invalid or closed")
+                    server.finger_table[i][2:] = None, None, None
+                    continue
+                if sock not in server.client_sockets:   # new socket => add to client_sockets
                     server.client_sockets[sock] = (host, port)
 
             sockets_to_read = [master_socket] + list(server.client_sockets.keys())
@@ -386,6 +480,9 @@ def start_server(project_name, node_id):
             readable_sockets, _, _ = select.select(sockets_to_read, [], [])
 
             for sock in readable_sockets:
+                if not sock:
+                    print("skipping connection")
+                    continue
                 if sock is master_socket:  # new connection
                     client_socket, addr = master_socket.accept()
                     print(f"New connection from {addr}")
