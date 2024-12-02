@@ -38,21 +38,25 @@ def print_info(server):
     """ print connection infos every 5 sec """
     while True:
         print(f"\nnode_id: {server.node_id}")
-        print(f"data size: {len(server.spreadsheet.data)}")
-        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
+        size = len(server.spreadsheet.data)
+        resp = len([key for key in server.spreadsheet.data.keys() if server._isResponsible(key)])
+        print(f"data size: {size}\t resp: {resp}\t repl: {size-resp}")
+
         if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
+        if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
+        
         print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
         print(f'\n\tpointed_table ({server.node_id}): ')
         for node_id, row in server.pointed_table.items():
             print(f'{node_id}\t{row[:-1]}')
-        print(f'\n\tpred_finger_table ({server.predecessor.node_id if server.predecessor else None}): ')
-        for target_id, node_id, host, port in server.pred_finger_table:
-            print(f'{target_id}\t{node_id}\t: {host}:{port}')
-        print(f'\n\tpred_pointed_table ({server.predecessor.node_id if server.predecessor else None}): ')
-        for node_id, row in server.pred_pointed_table.items():
-            print(f'{node_id}\t: {row}')
+        # print(f'\n\tpred_finger_table ({server.predecessor.node_id if server.predecessor else None}): ')
+        # for target_id, node_id, host, port in server.pred_finger_table:
+        #     print(f'{target_id}\t{node_id}\t: {host}:{port}')
+        # print(f'\n\tpred_pointed_table ({server.predecessor.node_id if server.predecessor else None}): ')
+        # for node_id, row in server.pred_pointed_table.items():
+        #     print(f'{node_id}\t: {row}')
         print("\n")
         time.sleep(5)
 
@@ -96,7 +100,7 @@ class SpreadSheetServer:
 
         self._join()    # call join() to join the chord
 
-        self.flag = 0
+        self.flag = 0   # flag = 0: predecessor is stable; flag = 1: predecessor is unstable
     
 
     def _join(self):
@@ -281,20 +285,37 @@ class SpreadSheetServer:
                         # update successor if needed
                         if self.successor.node_id == old_id:
                             self.successor = Node(host, port, new_id, new_sock)
-                        self.send_message(new_sock, {"method": "flag"})
+                            # send its data to its successor => update its replication in successor
+                            for key, val in self.spreadsheet.data.items():
+                                if self._isResponsible(key):
+                                    self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
+
+                        self.send_message(new_sock, {"method": "flag"})     # inform takeover node it has completed finger table change
                         # send updated FT and PT info to successor
                         self.send_message(self.successor.socket, {"method": "imYourUpdatedPred", "node_id": self.node_id, "host": self.host, "port": self.port, "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}, "PFT": [row[:-1] for row in self.finger_table]})
                     
-                    elif method == "flag":
-                        self.flag -= 1
-                        if self.flag == 0:
+                    elif method == "flag":  # an affected node finished updating finger table
+                        self.flag -= 1 
+                        if self.flag == 0:  # all nodes finished => stable
                             # send updated FT and PT info to successor
                             self.send_message(self.successor.socket, {"method": "imYourUpdatedPred", "node_id": self.node_id, "host": self.host, "port": self.port, "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}, "PFT": [row[:-1] for row in self.finger_table]})
+                            
+                            # ask its predecessor for data => update predecessor's replication
+                            # self.send_message(self.predecessor.socket, {"method": "needs_replication"})
+
+                    # elif method == "needs_replication":
+                    #     for key, val in self.spreadsheet.data.items():
+                    #         if self._isResponsible(key):
+                    #             self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
 
                     elif method == "imYourUpdatedPred":
                         self.predecessor = Node(request.get("host"), request.get("port"), request.get("node_id"), sock)
                         self.pred_finger_table = request.get("PFT")
                         self.pred_pointed_table = request.get("PPT")
+                        # send its data to its successor => update its replication in successor
+                        for key, val in self.spreadsheet.data.items():
+                            if self._isResponsible(key):
+                                self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
 
                     elif method == "imYourPred":
                         pred_host, pred_port = request.get("host"), request.get("port")
@@ -322,7 +343,7 @@ class SpreadSheetServer:
                             # notify all its PT of new pred's existance
                             for node_id, row in self.pointed_table.items():
                                 self.send_message(row[-1], {"method": "newNode", "node_id": self.predecessor.node_id, "host": self.predecessor.host, "port": self.predecessor.port})
-                            
+        
 
                     elif method == "yourNewSucc":
                         succ_host, succ_port = request.get("host"), request.get("port")
@@ -389,6 +410,7 @@ class SpreadSheetServer:
     def _isResponsible(self, key):
         """ test if is responsible for this key (lookup) """
         if not self.predecessor: return True
+        key = int(key)
         return self._inInterval(self.predecessor.node_id+1, self.node_id+1, key)
 
     def _route(self, target_id, message):
