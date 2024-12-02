@@ -10,8 +10,15 @@ class SpreadSheet:
         self.log_path = f"log/{str(node_id)}/sheet.log"
         self.log_max_size = log_max_size
         self.log_size = 0
-        self._recover()
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+
+        # Empty the log and checkpoint files
+        open(self.ckpt_path, "w").close()  # Truncate or create ckpt file
+        open(self.log_path, "w").close()  # Truncate or create log file
+        
+        self._recover()
         self.log = open(self.log_path, "a")
         
 
