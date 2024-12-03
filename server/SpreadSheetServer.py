@@ -103,7 +103,7 @@ class SpreadSheetServer:
         self._join()    # call join() to join the chord
 
         self.flag = 0   # flag = 0: predecessor is stable; flag = 1: predecessor is unstable
-        self.last_pred_id = None
+        self.last_pred_id = self.node_id
     
 
     def _join(self):
@@ -350,7 +350,7 @@ class SpreadSheetServer:
                         # transfer original predecessor's replication data to new predecessor, and delete them
                         to_delete = set()
                         for key, val in self.spreadsheet.data.items():
-                            if int(key) <= self.last_pred_id:
+                            if int(key) <= int(self.last_pred_id):
                                 self.send_message(self.predecessor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
                                 to_delete.add(key)
                         for key in to_delete:
