@@ -41,6 +41,8 @@ def print_info(server):
         size = len(server.spreadsheet.data)
         resp = len([key for key in server.spreadsheet.data.keys() if server._isResponsible(key)])
         print(f"data size: {size}\t resp: {resp}\t repl: {size-resp}")
+        # print(f"resp: {[key for key in server.spreadsheet.data.keys() if server._isResponsible(key)]}")
+        # print(f"repl: {[key for key in server.spreadsheet.data.keys() if not server._isResponsible(key)]}")
 
         if server.predecessor: print(f"predecessor: {server.predecessor.host}:{server.predecessor.port}, {server.predecessor.node_id}")
         if server.successor: print(f"successor: {server.successor.host}:{server.successor.port}, {server.successor.node_id}")
@@ -48,9 +50,9 @@ def print_info(server):
         print(f'\n\tfinger_table ({server.node_id}): ')
         for target_id, node_id, host, port, socket in server.finger_table:
             print(f'{target_id}\t{node_id}\t: {host}:{port}, {"con" if socket else "not"}')
-        print(f'\n\tpointed_table ({server.node_id}): ')
-        for node_id, row in server.pointed_table.items():
-            print(f'{node_id}\t{row[:-1]}')
+        # print(f'\n\tpointed_table ({server.node_id}): ')
+        # for node_id, row in server.pointed_table.items():
+        #     print(f'{node_id}\t{row[:-1]}')
         # print(f'\n\tpred_finger_table ({server.predecessor.node_id if server.predecessor else None}): ')
         # for target_id, node_id, host, port in server.pred_finger_table:
         #     print(f'{target_id}\t{node_id}\t: {host}:{port}')
@@ -101,6 +103,7 @@ class SpreadSheetServer:
         self._join()    # call join() to join the chord
 
         self.flag = 0   # flag = 0: predecessor is stable; flag = 1: predecessor is unstable
+        self.last_pred_id = None
     
 
     def _join(self):
@@ -169,6 +172,7 @@ class SpreadSheetServer:
         self.send_message(self.successor.socket, {"method": "updatePFT", "PFT": [row[:-1] for row in self.finger_table]})
         for sock in affected_sockets | {self.successor.socket}:
             self.send_message(sock, {"method": "chordEstablishmentCompleted"})
+        self.send_message(self.successor.socket, {"method": "readyForDataTransfer"})
 
     def handle_pred_failure(self):
         """ handle predecessor failure """
@@ -299,14 +303,6 @@ class SpreadSheetServer:
                         if self.flag == 0:  # all nodes finished => stable
                             # send updated FT and PT info to successor
                             self.send_message(self.successor.socket, {"method": "imYourUpdatedPred", "node_id": self.node_id, "host": self.host, "port": self.port, "PPT": {node_id: row[:-1] for node_id, row in self.pointed_table.items()}, "PFT": [row[:-1] for row in self.finger_table]})
-                            
-                            # ask its predecessor for data => update predecessor's replication
-                            # self.send_message(self.predecessor.socket, {"method": "needs_replication"})
-
-                    # elif method == "needs_replication":
-                    #     for key, val in self.spreadsheet.data.items():
-                    #         if self._isResponsible(key):
-                    #             self.send_message(self.successor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
 
                     elif method == "imYourUpdatedPred":
                         self.predecessor = Node(request.get("host"), request.get("port"), request.get("node_id"), sock)
@@ -337,13 +333,29 @@ class SpreadSheetServer:
                         else:   # ring member receives
                             # inform predecessor
                             self.send_message(self.predecessor.socket, {"method": "yourNewSucc", "host": pred_host, "port": pred_port, "node_id": request.get("node_id")})
+                            self.last_pred_id = self.predecessor.node_id
+                            # set new predecessor
                             self.predecessor = Node(pred_host, pred_port, request.get("node_id"), sock)
                             # update finger table to include predecessor
                             self.update_finger_table(self.predecessor.node_id, self.predecessor.host, self.predecessor.port, True)
                             # notify all its PT of new pred's existance
                             for node_id, row in self.pointed_table.items():
                                 self.send_message(row[-1], {"method": "newNode", "node_id": self.predecessor.node_id, "host": self.predecessor.host, "port": self.predecessor.port})
-        
+
+                    elif method == "readyForDataTransfer":
+                        # transfer original predecessor's replication data to new predecessor, and delete them
+                        to_delete = set()
+                        for key, val in self.spreadsheet.data.items():
+                            if int(key) <= self.last_pred_id:
+                                self.send_message(self.predecessor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
+                                to_delete.add(key)
+                        for key in to_delete:
+                            self.spreadsheet.remove(key)
+                        # transfer new node's responsible data to it
+                        for key, val in self.spreadsheet.data.items():
+                            if not self._isResponsible(key):
+                                self.send_message(self.predecessor.socket, {"method": "insert_replication", "repli_key": key, "value": val})
+                                self.send_message(self.successor.socket, {"method": "remove_replication", "repli_key": key})
 
                     elif method == "yourNewSucc":
                         succ_host, succ_port = request.get("host"), request.get("port")
@@ -532,7 +544,8 @@ def start_server(project_name, node_id):
                         sock.close()
                         del server.client_sockets[sock]
                     except (ConnectionResetError, BrokenPipeError) as e:
-                        print(f"{server.client_sockets[sock]} disconnected unexpectedly: {e}")
+                        del server.client_sockets[sock]
+                        # print(f"{server.client_sockets[sock]} disconnected unexpectedly: {e}")
                     except json.JSONDecodeError:
                         print(f"Received malformed JSON from {server.client_sockets[sock]}")
 
