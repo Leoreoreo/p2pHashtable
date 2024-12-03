@@ -114,12 +114,16 @@ class SpreadSheetServer:
             services = response.json()
 
             # select a random server (last active)
-            # TODO: retry connecting to service (loop through all possible names)
-            service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]], key=lambda x: x.get("lastheardfrom"))
-            random_host = service.get("name")
-            random_port = service.get("port")
-            join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            join_socket.connect((random_host, random_port)) # connect to this server, and send join request
+            # retry connecting to service (loop through all possible names)
+            for service in [service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]]:
+                try:
+                    random_host = service.get("name")
+                    random_port = service.get("port")
+                    join_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    join_socket.connect((random_host, random_port)) # connect to this server, and send join request
+                    break
+                except:
+                    pass
             response_data = self.send_request(join_socket, {"method": "join", "key": self.node_id})  # get successor addr from response
             join_socket.close()
 
