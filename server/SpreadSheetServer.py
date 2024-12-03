@@ -113,7 +113,7 @@ class SpreadSheetServer:
             response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # connect to name server
             services = response.json()
 
-            # select a random server (last active)
+            # select a random server
             # retry connecting to service (loop through all possible names)
             for service in [service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]]:
                 try:
