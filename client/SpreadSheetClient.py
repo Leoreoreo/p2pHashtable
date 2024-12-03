@@ -4,6 +4,7 @@ import socket
 import json
 import requests
 import time
+import random
 
 class SpreadSheetClient:
     def __init__(self, project_name):
@@ -19,11 +20,22 @@ class SpreadSheetClient:
         try:
             response = requests.get("http://catalog.cse.nd.edu:9097/query.json")    # name server
             services = response.json()
-            # TODO: retry connecting to service (loop through all possible names)
-            service = max([service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name], key=lambda x: x.get("lastheardfrom"))
-            self.host = service.get("name")
-            self.port = service.get("port")
-            print(f'connecting to: {self.host, self.port}')
+
+            # select a random server
+            # retry connecting to service (loop through all possible names)
+            services = [service for service in services if service.get("type") == "spreadsheet" and service.get("project").split('_')[0] == self.project_name.split('_')[0]]
+            random.shuffle(services)
+            for service in services:
+                try:
+                    self.host = service.get("name")
+                    self.port = service.get("port")
+                    self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.client_socket.connect((self.host, self.port)) # connect to this server, and send join request
+                    print(f'connecting to: {self.host, self.port}')
+                    break
+                except:
+                    pass
+            
 
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_socket.connect((self.host, self.port))
