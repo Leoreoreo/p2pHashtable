@@ -4,9 +4,11 @@ import sys
 import time
 from SpreadSheetClient import SpreadSheetClient
 import os
+import random
 
 FINGER_NUM  = 16
 MAX_KEY     = 2 ** FINGER_NUM
+ITERATIONS  = 1000
 
 def measure(client, operation, *args):
     start = time.time()
@@ -22,33 +24,30 @@ if __name__ == "__main__":
     client = SpreadSheetClient(project_name)
     pid = os.getpid()
     
-    iterations = 1000
-    start_val = ((pid % 10) * iterations * 10) % MAX_KEY
-    print(f"inserting {start_val} - {(start_val + iterations)%MAX_KEY}")
+    testList = random.sample(range(MAX_KEY), ITERATIONS)
 
-    # insert  
+    # insert
     total_insert_time = 0
-    for i in range(start_val, start_val+iterations):
+    for i in testList:
         result, duration = measure(client, client.insert, i, {"value": i})
         total_insert_time += duration
-    print("insert complete")
+    # print("insert complete")
     
     # lookup  
     total_lookup_time = 0
-    for i in range(start_val, start_val+iterations):
+    for i in testList:
         result, duration = measure(client, client.lookup, i)
         total_lookup_time += duration
-    print("lookup complete")
+    # print("lookup complete")
 
     # remove  
     total_remove_time = 0
-    for i in range(start_val, start_val+iterations):
+    for i in testList:
         result, duration = measure(client, client.remove, i)
         total_remove_time += duration
-
-    print("remove complete")
+    # print("remove complete")
 
     print()
-    print(f"insert\tthroughput: {iterations / total_insert_time:4.6f}\tops/sec\tlatency: {total_insert_time / iterations:.6f} sec")
-    print(f"lookup\tthroughput: {iterations / total_lookup_time:4.6f}\tops/sec\tlatency: {total_lookup_time / iterations:.6f} sec")
-    print(f"remove\tthroughput: {iterations / total_remove_time:4.6f}\tops/sec\tlatency: {total_remove_time / iterations:.6f} sec")
+    print(f"insert\tthroughput: {ITERATIONS / total_insert_time:4.6f}\tops/sec\tlatency: {total_insert_time / ITERATIONS:.6f} sec")
+    print(f"lookup\tthroughput: {ITERATIONS / total_lookup_time:4.6f}\tops/sec\tlatency: {total_lookup_time / ITERATIONS:.6f} sec")
+    print(f"remove\tthroughput: {ITERATIONS / total_remove_time:4.6f}\tops/sec\tlatency: {total_remove_time / ITERATIONS:.6f} sec")

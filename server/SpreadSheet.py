@@ -6,46 +6,47 @@ class SpreadSheet:
     def __init__(self, node_id, log_max_size=100):
         self.data = {}
         self.node_id = node_id
-        self.ckpt_path = f"ckpt/{str(node_id)}/sheet.ckpt"
-        self.log_path = f"log/{str(node_id)}/sheet.log"
-        self.log_max_size = log_max_size
-        self.log_size = 0
-        # Ensure directories exist
-        os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
-        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+        # self.ckpt_path = f"ckpt/{str(node_id)}/sheet.ckpt"
+        # self.log_path = f"log/{str(node_id)}/sheet.log"
+        # self.log_max_size = log_max_size
+        # self.log_size = 0
+        # # Ensure directories exist
+        # os.makedirs(os.path.dirname(self.ckpt_path), exist_ok=True)
+        # os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
 
-        # Empty the log and checkpoint files
-        open(self.ckpt_path, "w").close()  # Truncate or create ckpt file
-        open(self.log_path, "w").close()  # Truncate or create log file
+        # # Empty the log and checkpoint files
+        # open(self.ckpt_path, "w").close()  # Truncate or create ckpt file
+        # open(self.log_path, "w").close()  # Truncate or create log file
         
         self._recover()
-        self.log = open(self.log_path, "a")
+        # self.log = open(self.log_path, "a")
         
 
     # recover from crash: load checkpoint and then replay log
     def _recover(self):
-        # load from checkpoint
-        try:
-            with open(self.ckpt_path, "r") as ckpt:
-                self.data = json.load(ckpt)
-        except Exception as e:
-            self.data = {}
+        self.data = {}
+        # # load from checkpoint
+        # try:
+        #     with open(self.ckpt_path, "r") as ckpt:
+        #         self.data = json.load(ckpt)
+        # except Exception as e:
+        #     self.data = {}
         
-        # replay log
-        try:
-            with open(self.log_path, "r") as log:
-                for line in log:
-                    self.log_size += 1
-                    log_dic = json.loads(line)
-                    method = log_dic["method"]
-                    key = log_dic["key"]
-                    value = log_dic["value"]
-                    if method == "insert":
-                        self.data[f'{key}'] = value
-                    elif method == "remove" and f'{key}' in self.data:
-                        del self.data[f'{key}']
-        except Exception as e:
-            pass
+        # # replay log
+        # try:
+        #     with open(self.log_path, "r") as log:
+        #         for line in log:
+        #             self.log_size += 1
+        #             log_dic = json.loads(line)
+        #             method = log_dic["method"]
+        #             key = log_dic["key"]
+        #             value = log_dic["value"]
+        #             if method == "insert":
+        #                 self.data[f'{key}'] = value
+        #             elif method == "remove" and f'{key}' in self.data:
+        #                 del self.data[f'{key}']
+        # except Exception as e:
+        #     pass
         
         print("recover complete")
         print(self.data)
@@ -105,8 +106,8 @@ class SpreadSheet:
             return {"status": "failure", "message": "Invalid key value"}
         # insert
         self.data[f'{key}'] = value
-        # append to log
-        self._write_log("insert", key, value)
+        # # append to log
+        # self._write_log("insert", key, value)
         # return
         return {"status": "success"}
 
@@ -143,7 +144,7 @@ class SpreadSheet:
         if f'{key}' in self.data:
             del self.data[f'{key}']
             # append to log
-            self._write_log("remove", key)
+            # self._write_log("remove", key)
             return {"status": "success"}
 
         # not found
