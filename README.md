@@ -37,6 +37,7 @@ python3 ./client/TestBasics.py <project_name>
 ```
 python3 ./client/TestPerf.py <project_name>
 ```
+- [test results](https://colab.research.google.com/drive/1Kl1z5VYx7zStE08ROs4KYZK5JeeazpN_?usp=sharing)
 
 ## Documents
 - [project proposal](https://docs.google.com/document/d/1WbyIjw985jdG8tDCrGutfF6qgVYsxmeQ8zx6wO8MM0A/edit?tab=t.0)
