@@ -43,3 +43,4 @@ python3 ./client/TestPerf.py <project_name>
 - [project proposal](https://docs.google.com/document/d/1WbyIjw985jdG8tDCrGutfF6qgVYsxmeQ8zx6wO8MM0A/edit?tab=t.0)
 - [project report](https://docs.google.com/document/d/1BwiXdTeq11H4dstQn3BZIUQmUbn_gdoFPMAWAzMkHok/edit?tab=t.0)
 - [presentation](https://docs.google.com/presentation/d/1gtjw9OqKUPV1NYyNfGNaOPeqVxXBwR-J/edit#slide=id.g31b1776cccc_0_69)
+- [final report](https://docs.google.com/document/d/1GW5MUFwgestbj05B2qW5W1NxJ_zdWABMkM4yA-rOzL0/edit?tab=t.0#heading=h.sia5i7iltmnd)
