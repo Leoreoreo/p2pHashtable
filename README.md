@@ -19,7 +19,7 @@ Python 3.10.14 | packaged by conda-forge | (main, Mar 20 2024, 12:45:18) [GCC 12
 ### Parameters
 - Fingertable size: `16`
 - Max key: `2**16 = 65536`
-  - can change `FINGER_NUM` in `server/SpreadSheetServer.py` and `client/TestPerf.py`
+  - can change `FINGER_NUM` in `server/SpreadSheetServer.py` and `client/Test*.py`
 
 ### Run Server(s)
 run the following command `python3 ./server/SpreadSheetServer.py <project_name> <node_id>`
@@ -30,12 +30,23 @@ run the following command `python3 ./server/SpreadSheetServer.py <project_name> 
 
 ### Run Tests
 #### Test Basic Functions
+you can edit the `TestBasics.py` to test the client operations
 ```
 python3 ./client/TestBasics.py <project_name>
 ```
 #### Test Throughputs
+Test the throughput for each operation:
+- insert (insert 1000 random keys)
 ```
-python3 ./client/TestPerf.py <project_name>
+python3 ./client/TestInsert.py <project_name>
+```
+- remove (remove 1000 random keys)
+```
+python3 ./client/TestRemove.py <project_name>
+```
+- lookup (lookup 1000 random keys)
+```
+python3 ./client/TestLookUp.py <project_name>
 ```
 - [test results](https://colab.research.google.com/drive/1Kl1z5VYx7zStE08ROs4KYZK5JeeazpN_?usp=sharing)
 
