@@ -8,7 +8,7 @@ import random
 
 FINGER_NUM  = 16
 MAX_KEY     = 2 ** FINGER_NUM
-ITERATIONS  = 1000
+ITERATIONS  = 10000
 
 def measure(client, operation, *args):
     start = time.time()
@@ -31,6 +31,7 @@ if __name__ == "__main__":
     total_lookup_time = 0
     for i in testList:
         result, duration = measure(client, client.lookup, i)
+        # print(result)
         total_lookup_time += duration
     # print("lookup complete")
 
