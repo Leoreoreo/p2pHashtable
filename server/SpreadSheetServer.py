@@ -187,10 +187,13 @@ class SpreadSheetServer:
                 if self.pointed_table[self.predecessor.node_id][0] == 0:
                     del self.pointed_table[self.predecessor.node_id]
                 continue
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((host, port))
-            self.send_message(sock, {"method": "imNotPointingAtYou", "node_id": self.predecessor.node_id})
-            sock.close()
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((host, port))
+                self.send_message(sock, {"method": "imNotPointingAtYou", "node_id": self.predecessor.node_id})
+                sock.close()
+            except:
+                pass
         # inform all nodes pointing at my predecessor that I'm taking over
         for node_id, row in self.pred_pointed_table.items():
             _, host, port = row
@@ -544,9 +547,10 @@ def start_server(project_name, node_id):
                             sock.sendall(response_data)  # send response
 
                     except EOFError:
-                        print(f"{sock.getpeername()} disconnected")
-                        sock.close()
-                        del server.client_sockets[sock]
+                        if sock:
+                            # print(f"{sock.getpeername()} disconnected")
+                            sock.close()
+                            del server.client_sockets[sock]
                     except (ConnectionResetError, BrokenPipeError) as e:
                         del server.client_sockets[sock]
                         # print(f"{server.client_sockets[sock]} disconnected unexpectedly: {e}")
