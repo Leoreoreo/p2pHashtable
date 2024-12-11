@@ -125,6 +125,9 @@ class SpreadSheetServer:
                 except:
                     pass
             response_data = self.send_request(join_socket, {"method": "join", "key": self.node_id})  # get successor addr from response
+            if response_data["status"] == "failure":
+                print("invalid node_id")
+                return
             join_socket.close()
 
             # connect to successor
@@ -276,6 +279,8 @@ class SpreadSheetServer:
                     # new node ask to join chord, the node happens to be its successor
                     elif method == "join":
                         message = {"status": "success", "host": f"{self.host}", "port": f"{self.port}", "node_id": f"{self.node_id}"}
+                        if self.node_id == request.get("key"):
+                            message = {"status": "failure"}
                         if request.get("msg_id"):
                             message["msg_id"] = request.get("msg_id")
                         self.send_message(sock, message)
