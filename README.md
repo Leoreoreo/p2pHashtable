@@ -6,6 +6,10 @@
 - Leyang Li (lli27@nd.edu)
 - Zanxiang Yin (zyin5@nd.edu)
 
+## Project Description
+- [Description PDF](https://github.com/Leoreoreo/p2pHashtable/blob/main/Peer-to-Peer%20Hash%20Table.pdf)
+
+
 ## Usage
 ### Environment
 - python stardard library
@@ -50,7 +54,7 @@ python3 ./client/TestLookUp.py <project_name>
 ```
 - [test results](https://colab.research.google.com/drive/1Kl1z5VYx7zStE08ROs4KYZK5JeeazpN_?usp=sharing)
 
-## Documents
+## Documents (Require access)
 - [project proposal](https://docs.google.com/document/d/1WbyIjw985jdG8tDCrGutfF6qgVYsxmeQ8zx6wO8MM0A/edit?tab=t.0)
 - [project report](https://docs.google.com/document/d/1BwiXdTeq11H4dstQn3BZIUQmUbn_gdoFPMAWAzMkHok/edit?tab=t.0)
 - [presentation](https://docs.google.com/presentation/d/1gtjw9OqKUPV1NYyNfGNaOPeqVxXBwR-J/edit#slide=id.g31b1776cccc_0_69)
